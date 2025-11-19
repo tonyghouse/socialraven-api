@@ -86,3 +86,5 @@ build/
 *.bat
 
 *.DS_Store
+
+application-local.properties
