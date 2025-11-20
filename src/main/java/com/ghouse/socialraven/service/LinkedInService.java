@@ -1,8 +1,13 @@
 package com.ghouse.socialraven.service;
 
-import com.ghouse.socialraven.entity.OAuthToken;
-import com.ghouse.socialraven.repo.OAuthTokenRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ghouse.socialraven.constant.Provider;
+import com.ghouse.socialraven.entity.OAuthInfo;
+import com.ghouse.socialraven.model.AdditionalOAuthInfo;
+import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -16,7 +21,6 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
 
 @Service
 public class LinkedInService {
@@ -31,7 +35,7 @@ public class LinkedInService {
     private String redirectUri;
 
     @Autowired
-    private OAuthTokenRepository repo;
+    private OAuthInfoRepo repo;
 
     public void exchangeCodeForToken(String code) {
 
@@ -64,14 +68,19 @@ public class LinkedInService {
         Map<String, Object> userInfo = getUserInfo(accessToken);
         String linkedInUserId = (String) userInfo.get("sub");
 
-        OAuthToken token = new OAuthToken();
-        token.setProvider("linkedin");
-        token.setAccessToken(accessToken);
-        token.setExpiresAt(System.currentTimeMillis() + expiresIn * 1000L);
+        OAuthInfo oauthInfo = new OAuthInfo();
+        oauthInfo.setProvider(Provider.LINKEDIN);
+        oauthInfo.setProviderUserId(linkedInUserId);
+        oauthInfo.setAccessToken(accessToken);
+        oauthInfo.setExpiresAt(System.currentTimeMillis() + expiresIn * 1000L);
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        token.setUserId(userId);
+        oauthInfo.setUserId(userId);
+        AdditionalOAuthInfo additionalInfo = new AdditionalOAuthInfo(); //jsonb
+        additionalInfo.setLinkedInUserId(linkedInUserId);
+        oauthInfo.setAdditionalInfo(additionalInfo);
 
-        repo.save(token);
+
+        repo.save(oauthInfo);
     }
 
     private Map<String, Object> getUserInfo(String accessToken) {
@@ -90,15 +99,19 @@ public class LinkedInService {
         return resp.getBody();
     }
 
-    public void postToLinkedIn(Long userId, String message) {
-        OAuthToken token = null;
-//                repo.findByUserIdAndProvider(userId, "linkedin")
-//                .orElseThrow();
+    public void postToLinkedIn(String userId, String message) {
+        OAuthInfo authInfo = repo.findByUserIdAndProvider(userId, Provider.LINKEDIN);
+        if (authInfo == null) {
+            throw new RuntimeException("Unable to find LinkedIn AuthInfo for userId: " + userId);
+        }
 
-        String author = null;
-//                 "urn:li:person:" + token.getLinkedInUserId();
+        AdditionalOAuthInfo additionalInfo = authInfo.getAdditionalInfo();
+        String linkedInUserId = additionalInfo.getLinkedInUserId();
+        String author = "urn:li:person:" + linkedInUserId;
 
         String url = "https://api.linkedin.com/v2/ugcPosts";
+
+        ObjectMapper mapper = new ObjectMapper();
 
         Map<String, Object> payload = Map.of(
                 "author", author,
@@ -114,11 +127,25 @@ public class LinkedInService {
                 )
         );
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token.getAccessToken());
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        String jsonBody;
+        try {
+            jsonBody = mapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            throw new RuntimeException("Error serializing payload", e);
+        }
 
-        new RestTemplate().postForEntity(url, new HttpEntity<>(payload, headers), String.class);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authInfo.getAccessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set(HttpHeaders.ACCEPT, "application/json");
+
+        HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
+
+        RestTemplate rt = new RestTemplate();
+        ResponseEntity<String> response = rt.postForEntity(url, entity, String.class);
+
+        System.out.println(response.getBody());
     }
+
 
 }

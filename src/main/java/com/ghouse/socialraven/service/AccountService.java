@@ -3,7 +3,7 @@ package com.ghouse.socialraven.service;
 import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.dto.ConnectedAccountCountDto;
 import com.ghouse.socialraven.dto.ConnectedAccountDto;
-import com.ghouse.socialraven.repo.OAuthTokenRepository;
+import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -12,9 +12,9 @@ import java.util.List;
 @Service
 public class AccountService {
 
-    private final OAuthTokenRepository oAuthTokenRepo;
+    private final OAuthInfoRepo oAuthTokenRepo;
 
-    public AccountService(OAuthTokenRepository oAuthTokenRepo) {
+    public AccountService(OAuthInfoRepo oAuthTokenRepo) {
         this.oAuthTokenRepo = oAuthTokenRepo;
     }
 

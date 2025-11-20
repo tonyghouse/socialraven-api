@@ -2,7 +2,7 @@ package com.ghouse.socialraven.constant;
 
 public enum Platform {
     instagram,
-    twitter,
+    x,
     linkedin,
     facebook,
     youtube
