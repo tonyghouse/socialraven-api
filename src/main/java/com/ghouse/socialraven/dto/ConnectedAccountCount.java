@@ -4,13 +4,9 @@ import com.ghouse.socialraven.constant.Platform;
 import lombok.Data;
 
 @Data
-public class ConnectedAccountDto {
-
-    private String id;
+public class ConnectedAccountCount {
 
     private Platform platform;
 
-    private String username;
-
-    private String profile;
+    private Integer count;
 }

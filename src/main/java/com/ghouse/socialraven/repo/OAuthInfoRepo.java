@@ -1,12 +1,17 @@
 package com.ghouse.socialraven.repo;
 
 import com.ghouse.socialraven.constant.Provider;
-import com.ghouse.socialraven.entity.OAuthInfo;
+import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
-@Repository
-public interface OAuthInfoRepo extends JpaRepository<OAuthInfo, Long> {
-    OAuthInfo findByUserIdAndProvider(String userId, Provider provider);
+import java.util.List;
 
+@Repository
+public interface OAuthInfoRepo extends JpaRepository<OAuthInfoEntity, Long> {
+    List<OAuthInfoEntity> findAllByUserIdAndProvider(String userId, Provider provider);
+
+    List<OAuthInfoEntity> findAllByUserId(String userId);
+
+    OAuthInfoEntity findByUserIdAndProviderAndProviderUserId(String userId, Provider provider, String providerUserId);
 }

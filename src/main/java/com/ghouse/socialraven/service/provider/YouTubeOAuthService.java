@@ -1,22 +1,17 @@
-package com.ghouse.socialraven.service;
+package com.ghouse.socialraven.service.provider;
 
 import com.ghouse.socialraven.constant.Provider;
-import com.ghouse.socialraven.entity.OAuthInfo;
+import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
-import java.io.File;
-import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.ghouse.socialraven.util.TimeUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -24,7 +19,7 @@ import org.springframework.web.client.RestTemplate;
 
 
 @Service
-public class YouTubeService {
+public class YouTubeOAuthService {
 
     @Value("${youtube.client.id}")
     private String clientId;
@@ -61,20 +56,28 @@ public class YouTubeService {
         String providerUserId = fetchYoutubeChannelId(accessToken);
 
         // STEP 3: Save in DB
-        OAuthInfo oauthInfo = new OAuthInfo();
-        oauthInfo.setProvider(Provider.YOUTUBE);
-        oauthInfo.setProviderUserId(providerUserId);
-        oauthInfo.setAccessToken(accessToken);
-        oauthInfo.setExpiresAt(System.currentTimeMillis() + (expiresIn * 1000L));
+        OAuthInfoEntity oauthInfoEntity = new OAuthInfoEntity();
+        oauthInfoEntity.setProvider(Provider.YOUTUBE);
+        oauthInfoEntity.setProviderUserId(providerUserId);
+        oauthInfoEntity.setAccessToken(accessToken);
+        long expiresAtMillis = System.currentTimeMillis() + (expiresIn * 1000L);
+        oauthInfoEntity.setExpiresAt(expiresAtMillis);
+        oauthInfoEntity.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAtMillis));
 
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        oauthInfo.setUserId(userId);
+        oauthInfoEntity.setUserId(userId);
 
         AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
         additionalOAuthInfo.setYoutubeRefreshToken(refreshToken);
-        oauthInfo.setAdditionalInfo(additionalOAuthInfo);
+        oauthInfoEntity.setAdditionalInfo(additionalOAuthInfo);
 
-        repo.save(oauthInfo);
+        OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.YOUTUBE, oauthInfoEntity.getProviderUserId());
+        if (existingAuthInfo != null) {
+            throw new RuntimeException("Youtube OAuth already exist");
+        }
+
+
+        repo.save(oauthInfoEntity);
     }
 
     // =====================
@@ -104,52 +107,65 @@ public class YouTubeService {
         return (String) firstItem.get("id"); // The channel ID ✔
     }
 
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
 
-    public void uploadVideo(String userId, File videoFile) throws Exception {
+        long now = System.currentTimeMillis();
 
-        OAuthInfo info = repo.findByUserIdAndProvider(userId, Provider.YOUTUBE);
+        // Token still valid → return it
+        if (info.getExpiresAt() > now + 30_000) { // 30s safety buffer
+            return info;
+        }
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(info.getAccessToken());
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        Map<String, Object> metadata = Map.of(
-                "snippet", Map.of(
-                        "title", "Uploaded via API",
-                        "description", "This is an API upload"
-                ),
-                "status", Map.of(
-                        "privacyStatus", "unlisted"
-                )
-        );
-
-        // Step 1: Initiate resumable upload
-        ResponseEntity<String> initRes = new RestTemplate().exchange(
-                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-                HttpMethod.POST,
-                new HttpEntity<>(metadata, headers),
-                String.class
-        );
-
-        String uploadUrl = initRes.getHeaders().get("Location").get(0);
-
-        // Step 2: Upload video bytes
-        HttpHeaders uploadHeaders = new HttpHeaders();
-        uploadHeaders.setBearerAuth(info.getAccessToken());
-        uploadHeaders.setContentLength(videoFile.length());
-        uploadHeaders.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-
-        byte[] data = Files.readAllBytes(videoFile.toPath());
-
-        ResponseEntity<String> uploadRes = new RestTemplate().exchange(
-                uploadUrl,
-                HttpMethod.PUT,
-                new HttpEntity<>(data, uploadHeaders),
-                String.class
-        );
-
-        System.out.println(uploadRes.getBody());
+        // Otherwise refresh token
+        return refreshAccessToken(info);
     }
+
+    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+
+        String refreshToken = info.getAdditionalInfo().getYoutubeRefreshToken();
+        if (refreshToken == null) {
+            throw new RuntimeException("No YouTube refresh token stored");
+        }
+
+        RestTemplate rest = new RestTemplate();
+        String tokenUrl = "https://oauth2.googleapis.com/token";
+
+        Map<String, String> params = new HashMap<>();
+        params.put("client_id", clientId);
+        params.put("client_secret", clientSecret);
+        params.put("refresh_token", refreshToken);
+        params.put("grant_type", "refresh_token");
+
+        ResponseEntity<Map> resp = rest.postForEntity(tokenUrl, params, Map.class);
+
+        if (!resp.getStatusCode().is2xxSuccessful()) {
+            throw new RuntimeException("Failed to refresh YouTube token: " + resp);
+        }
+
+        Map body = resp.getBody();
+        String newAccessToken = (String) body.get("access_token");
+        Integer expiresIn = (Integer) body.get("expires_in");
+
+        if (newAccessToken == null) {
+            throw new RuntimeException("YouTube did not return access_token");
+        }
+
+        long newExpiresAt = System.currentTimeMillis() + expiresIn * 1000L;
+
+        info.setAccessToken(newAccessToken);
+        info.setExpiresAt(newExpiresAt);
+        info.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(newExpiresAt));
+
+        // Usually Google DOES NOT return a new refresh token here (only on first auth)
+        // But save if present
+        if (body.containsKey("refresh_token")) {
+            info.getAdditionalInfo().setYoutubeRefreshToken((String) body.get("refresh_token"));
+        }
+
+        return repo.save(info);
+    }
+
+
 
 }
 

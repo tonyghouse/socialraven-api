@@ -1,0 +1,10 @@
+ALTER TABLE socialraven.oauth_info
+ADD CONSTRAINT uq_user_provider_provideruserid
+UNIQUE (user_id, provider, provider_user_id);
+
+
+CREATE INDEX idx_oauth_info_user_id
+    ON socialraven.oauth_info (user_id);
+
+CREATE INDEX idx_single_post_user_id
+    ON socialraven.singe_post (user_id);

@@ -8,16 +8,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @Data
 public class AdditionalOAuthInfo {
 
-    private String linkedInUserId;
+    private String xRefreshToken;
 
-    private String xUserId;
-    private String xAccessSecret;
-
-    private String instagramUserId;
-
-    private String youtubeUserId;
     private String youtubeRefreshToken;
 
-    private String facebookUserId;
 
 }

@@ -1,12 +1,13 @@
 package com.ghouse.socialraven.controller;
 
-import com.ghouse.socialraven.service.LinkedInService;
-import com.ghouse.socialraven.service.XService;
-import com.ghouse.socialraven.service.YouTubeService;
+import com.ghouse.socialraven.dto.ConnectedAccount;
+import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
+import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
+import com.ghouse.socialraven.service.provider.XOAuthService;
+import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,18 +22,28 @@ import java.util.Map;
 public class OAuthController {
 
     @Autowired
-    private LinkedInService linkedInService;
+    private LinkedInOAuthService linkedInOAuthService;
+
 
     @Autowired
-    private XService xService;
+    private YouTubeOAuthService youtubeOAuthService;
 
     @Autowired
-    private YouTubeService youtubeService;
+    private XOAuthService xOAuthService;
+
+
+    @PostMapping("/x/callback")
+    public ResponseEntity<ConnectedAccount> handleCallback(
+            @RequestBody XOAuthCallbackRequest request
+    ) {
+        ConnectedAccount dto = xOAuthService.handleCallback(request);
+        return ResponseEntity.ok(dto);
+    }
 
 
     @PostMapping("/linkedin/callback")
     public ResponseEntity<String> handleLinkedinCallback(@RequestBody Map<String, String> body) {
-        linkedInService.exchangeCodeForToken(body.get("code"));
+        linkedInOAuthService.exchangeCodeForToken(body.get("code"));
         return ResponseEntity.ok("LinkedIn connected");
     }
 
@@ -40,7 +51,7 @@ public class OAuthController {
     public ResponseEntity<?> youtubeCallback(@RequestBody Map<String, String> body) {
         try {
             log.info("Youtube callback request: {}",body);
-            youtubeService.exchangeCodeForTokens(body.get("code"));
+            youtubeOAuthService.exchangeCodeForTokens(body.get("code"));
             return ResponseEntity.ok("YouTube connected");
         } catch (Exception exp) {
             log.error("Youtube Callback Url Failed: {}", exp.getMessage() ,exp);
@@ -49,31 +60,7 @@ public class OAuthController {
     }
 
 
-    @GetMapping("/x/request-token")
-    public ResponseEntity<Map<String, String>> getXRequestToken() {
-        try {
-            Map<String, String> requestToken = xService.getXRequestToken();
-            return ResponseEntity.ok(requestToken);
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
-        }
-    }
 
-    @PostMapping("/x/access-token")
-    public ResponseEntity<?> getXAccessToken(@RequestBody Map<String, String> body) throws Exception {
-        try {
-            String twitterUserId = xService.getXAccessToken(body);
-
-            return ResponseEntity.ok(Map.of(
-                    "status", "connected",
-                    "userId", twitterUserId
-            ));
-
-        } catch (Exception exp) {
-            log.error("X Callback Url Failed: {}", exp.getMessage() ,exp);
-            return ResponseEntity.status(500).body(Map.of("error", exp.getMessage()));
-        }
-    }
 
 
 }

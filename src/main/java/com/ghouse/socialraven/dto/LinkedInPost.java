@@ -3,6 +3,6 @@ package com.ghouse.socialraven.dto;
 import lombok.Data;
 
 @Data
-public class XPostDto {
+public class LinkedInPost {
     private String message;
 }
