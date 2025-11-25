@@ -14,5 +14,6 @@ public class MediaResponse {
     private String fileName;
     private String mimeType;
     private long size;
-    private String url;   // pre-signed URL
+    private String fileUrl;   // pre-signed URL
+    private String fileKey;
 }

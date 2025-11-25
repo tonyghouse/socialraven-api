@@ -122,7 +122,8 @@ public class PostService {
                                     m.getFileName(),
                                     m.getMimeType(),
                                     m.getSize(),
-                                    storageService.generatePresignedGetUrl(m.getFileKey()) // FRESH URL
+                                    storageService.generatePresignedGetUrl(m.getFileKey()),
+                                    m.getFileKey()
                             )
                     ).toList();
 
@@ -165,7 +166,8 @@ public class PostService {
                                         m.getFileName(),
                                         m.getMimeType(),
                                         m.getSize(),
-                                        storageService.generatePresignedGetUrl(m.getFileKey()) // FRESH URL
+                                        storageService.generatePresignedGetUrl(m.getFileKey()),
+                                        m.getFileKey()
                                 )
                         ).toList();
 
