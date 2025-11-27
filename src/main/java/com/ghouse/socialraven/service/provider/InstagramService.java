@@ -46,16 +46,23 @@ public class InstagramService {
             // STEP 1: Exchange code → long-lived access token
             log.info("Step 1: Exchanging code for long-lived token");
             Map<String, Object> tokenResponse = exchangeForLongLivedToken(code);
-            String longAccessToken = (String) tokenResponse.get("access_token");
-            Integer expiresIn = (Integer) tokenResponse.get("expires_in");
-            log.info("Successfully obtained access token. Expires in: {} seconds", expiresIn);
 
-            // STEP 2: Get Instagram Business Account ID and User ID
-            log.info("Step 2: Fetching Instagram user info");
-            Map<String, Object> igUserInfo = fetchInstagramUserId(longAccessToken);
-            String instagramUserId = (String) igUserInfo.get("id");
-            String username = (String) igUserInfo.get("username");
-            log.info("Instagram user fetched - ID: {}, Username: {}", instagramUserId, username);
+            String longAccessToken = (String) tokenResponse.get("access_token");
+            Long expiresIn = tokenResponse.get("expires_in") != null
+                    ? ((Number) tokenResponse.get("expires_in")).longValue()
+                    : 5183944L; // Default ~60 days for IG long-lived tokens
+
+            // Instagram User ID comes in the token response!
+            Long instagramUserIdLong = ((Number) tokenResponse.get("user_id")).longValue();
+            String instagramUserId = String.valueOf(instagramUserIdLong);
+
+            log.info("Successfully obtained access token. Expires in: {} seconds, Instagram User ID: {}",
+                    expiresIn, instagramUserId);
+
+            // STEP 2: Get Instagram username (optional but nice to have)
+            log.info("Step 2: Fetching Instagram username");
+            String username = fetchInstagramUsername(longAccessToken, instagramUserId);
+            log.info("Instagram username fetched: {}", username);
 
             // STEP 3: Check if already exists
             log.info("Step 3: Checking if Instagram account already connected");
@@ -113,7 +120,8 @@ public class InstagramService {
             log.info("Sending POST request to exchange code for token");
             Map<String, Object> response = rest.postForObject(url, request, Map.class);
 
-            log.debug("Token exchange response: {}", response);
+            log.info("Token exchange response keys: {}", response.keySet());
+            log.debug("Token exchange full response: {}", response);
             return response;
 
         } catch (Exception e) {
@@ -122,22 +130,23 @@ public class InstagramService {
         }
     }
 
-    private Map<String, Object> fetchInstagramUserId(String accessToken) {
+    private String fetchInstagramUsername(String accessToken, String userId) {
+        // Use the correct Instagram Graph API endpoint with POST
         String url = String.format(
-                "https://graph.instagram.com/me?fields=id,username,account_type&access_token=%s",
-                accessToken
+                "https://graph.instagram.com/%s?fields=username&access_token=%s",
+                userId, accessToken
         );
 
-        log.debug("Fetching Instagram user info from: {}", url.replace(accessToken, "***"));
+        log.debug("Fetching Instagram username from: {}", url.replace(accessToken, "***"));
 
         try {
             Map<String, Object> response = rest.getForObject(url, Map.class);
-            log.debug("Instagram user info response: {}", response);
-            return response;
+            log.debug("Instagram username response: {}", response);
+            return (String) response.get("username");
 
         } catch (Exception e) {
-            log.error("Failed to fetch Instagram user info: {}", e.getMessage());
-            throw new RuntimeException("Failed to fetch Instagram user info: " + e.getMessage());
+            log.warn("Failed to fetch Instagram username (non-critical): {}", e.getMessage());
+            return "unknown"; // Fallback if username fetch fails
         }
     }
 }
