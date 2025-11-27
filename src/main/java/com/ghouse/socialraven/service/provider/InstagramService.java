@@ -4,6 +4,11 @@ import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
+
+import java.time.OffsetDateTime;
+import java.util.Map;
+
+import com.ghouse.socialraven.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,7 +21,6 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Map;
 
 @Service
 public class InstagramService {
@@ -37,6 +41,7 @@ public class InstagramService {
 
     @Autowired
     private RestTemplate rest;
+    private long timeInMillis;
 
     public void handleCallback(String code, String userId) {
         log.info("Starting Instagram OAuth callback for userId: {}", userId);
@@ -80,7 +85,9 @@ public class InstagramService {
             oAuthInfo.setProvider(Provider.INSTAGRAM);
             oAuthInfo.setUserId(userId);
             oAuthInfo.setAccessToken(longAccessToken);
-            oAuthInfo.setExpiresAt(System.currentTimeMillis() + expiresIn * 1000L);
+            var timeInMillis = System.currentTimeMillis() + expiresIn * 1000L;
+            oAuthInfo.setExpiresAt(timeInMillis);
+            oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(timeInMillis));
             oAuthInfo.setProviderUserId(instagramUserId);
 
             AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
