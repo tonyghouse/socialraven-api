@@ -8,11 +8,13 @@ import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import redis.clients.jedis.JedisPool;
 
@@ -41,6 +43,9 @@ public class ProfileService {
     @Autowired
     private YouTubeOAuthService youTubeOAuthService;
 
+    @Autowired
+    private Environment environment;
+
 
     public List<ConnectedAccount> getConnectedAccounts(String userId, Platform platform) {
         List<OAuthInfoEntity> authInfos = getOAuthInfos(userId, platform);
@@ -57,9 +62,14 @@ public class ProfileService {
 
             ConnectedAccount connectedAccount = null;
             if (Provider.X.equals(authInfo.getProvider())) {
-                //var validOAuthInfo = xoAuthService.getValidOAuthInfo(authInfo);
-                //connectedAccount = xProfileService.fetchProfile(validOAuthInfo);
-                connectedAccount=null;
+                boolean isProd = Arrays.asList(environment.getActiveProfiles())
+                        .contains("prod");
+                if (isProd) {
+                    var validOAuthInfo = xoAuthService.getValidOAuthInfo(authInfo);
+                    connectedAccount = xProfileService.fetchProfile(validOAuthInfo);
+                } else {
+                    connectedAccount = null;
+                }
             } else if (Provider.LINKEDIN.equals(authInfo.getProvider())) {
                 long now = System.currentTimeMillis();
                 if (authInfo.getExpiresAt() > now) {

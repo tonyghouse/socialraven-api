@@ -12,5 +12,9 @@ public class AdditionalOAuthInfo {
 
     private String youtubeRefreshToken;
 
+    private String facebookPageId;
+
+    private String instagramBusinessId;
+
 
 }
