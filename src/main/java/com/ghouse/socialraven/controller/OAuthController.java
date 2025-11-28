@@ -2,6 +2,7 @@ package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
+import com.ghouse.socialraven.service.provider.FacebookOAuthService;
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
@@ -36,6 +37,9 @@ public class OAuthController {
     @Autowired
     private InstagramOAuthService instagramOAuthService;
 
+    @Autowired
+    private FacebookOAuthService facebookOAuthService;
+
 
     @PostMapping("/x/callback")
     public ResponseEntity<ConnectedAccount> handleCallback(
@@ -65,12 +69,21 @@ public class OAuthController {
     }
 
     @PostMapping("/instagram/callback")
-    public ResponseEntity<?> callback(
+    public ResponseEntity<?> instagramCallback(
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         instagramOAuthService.handleCallback(body.get("code"), userId);
         return ResponseEntity.ok("Instagram connected");
+    }
+
+    @PostMapping("/facebook/callback")
+    public ResponseEntity<?> facebookCallback(
+            @RequestBody Map<String, String> body
+    ) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        facebookOAuthService.handleCallback(body.get("code"), userId);
+        return ResponseEntity.ok("Facebook connected");
     }
 
 
