@@ -25,7 +25,7 @@ public class OAuthInfoEntity {
     @Column(nullable = false)
     private String providerUserId;
 
-    @Column(length = 2000, nullable = false)
+    @Column(length = 10000, nullable = false)
     private String accessToken;
 
     @Column(nullable = false)

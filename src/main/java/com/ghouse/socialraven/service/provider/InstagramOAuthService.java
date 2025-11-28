@@ -80,6 +80,16 @@ public class InstagramOAuthService {
 
             // STEP 4: Save everything
             log.info("Step 4: Saving OAuth info to database");
+            // ADD THESE LOGS BEFORE SAVING:
+            log.info("====== TOKEN DEBUG INFO ======");
+            log.info("Access Token Length: {}", longAccessToken.length());
+            log.info("Access Token First 50 chars: {}", longAccessToken.substring(0, Math.min(50, longAccessToken.length())));
+            log.info("Access Token Last 20 chars: {}", longAccessToken.substring(Math.max(0, longAccessToken.length() - 20)));
+            log.info("Token contains spaces: {}", longAccessToken.contains(" "));
+            log.info("Token contains quotes: {}", longAccessToken.contains("\""));
+            log.info("Token starts with: {}", longAccessToken.substring(0, Math.min(10, longAccessToken.length())));
+            log.info("==============================");
+
             OAuthInfoEntity oAuthInfo = new OAuthInfoEntity();
             oAuthInfo.setProvider(Provider.INSTAGRAM);
             oAuthInfo.setUserId(userId);
