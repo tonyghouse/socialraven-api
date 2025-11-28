@@ -9,9 +9,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -52,40 +56,57 @@ public class InstagramOAuthService {
             // STEP 1: Exchange code → short-lived token
             log.info("Step 1: Exchanging code for initial access token");
             Map<String, Object> tokenResponse = exchangeForAccessToken(code);
+            String shortLivedAccessToken = (String) tokenResponse.get("access_token");
+            Long instagramUserIdLong = ((Number) tokenResponse.get("user_id")).longValue();
+            String instagramUserId = String.valueOf(instagramUserIdLong);
+
+            // STEP 2: Exchange short-lived token for long-lived access token
+            log.info("Step 2: Exchanging short-lived token for long-lived token");
+            Map<String, Object> longLivedTokenResponse = exchangeForLongLivedToken(shortLivedAccessToken);
 
             try(var jedis = jedisPool.getResource()){
-                jedis.set("instagram_token",tokenResponse.toString());
+                jedis.set("instagram_token",longLivedTokenResponse.toString());
             }
 
+            String longAccessToken = (String) longLivedTokenResponse.get("access_token");
+            Long expiresIn = ((Number) longLivedTokenResponse.get("expires_in")).longValue();
+            log.info("Successfully obtained long-lived access token. Expires in: {} seconds, Instagram User ID: {}",
+                    expiresIn, instagramUserId);
 
-//            String accessToken = (String) tokenResponse.get("access_token");
-//            Long instagramUserIdLong = ((Number) tokenResponse.get("user_id")).longValue();
-//            String instagramUserId = String.valueOf(instagramUserIdLong);
-//
-//            // STEP 2: Exchange short-lived token for long-lived access token
-//            log.info("Step 2: Exchanging short-lived token for long-lived token");
-//            Map<String, Object> longLivedTokenResponse = exchangeForLongLivedToken(accessToken);
-//
-//            String longAccessToken = (String) longLivedTokenResponse.get("access_token");
-//            Long expiresIn = ((Number) longLivedTokenResponse.get("expires_in")).longValue();
-//
-//            log.info("Successfully obtained long-lived access token. Expires in: {} seconds, Instagram User ID: {}",
-//                    expiresIn, instagramUserId);
+
+
+
+            // STEP 4: Check if already exists
+            log.info("Step 4: Checking if Instagram account already connected");
+            OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
+                    userId, Provider.INSTAGRAM, instagramUserId
+            );
+            if (existingAuthInfo != null) {
+                log.warn("Instagram account {} already connected for user {}", instagramUserId, userId);
+                throw new RuntimeException("Instagram account already connected");
+            }
+            OAuthInfoEntity oAuthInfo = new OAuthInfoEntity();
+            oAuthInfo.setProvider(Provider.INSTAGRAM);
+            oAuthInfo.setUserId(userId);
+            oAuthInfo.setAccessToken(longAccessToken);
+            var timeInMillis = System.currentTimeMillis() + expiresIn * 1000L;
+            oAuthInfo.setExpiresAt(timeInMillis);
+            oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(timeInMillis));
+            oAuthInfo.setProviderUserId(instagramUserId);
+
+            AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
+            oAuthInfo.setAdditionalInfo(additional);
+            repo.save(oAuthInfo);
+            log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", userId, instagramUserId);
+
+
 //
 //            // STEP 3: Get Instagram username (optional but nice to have)
 //            log.info("Step 3: Fetching Instagram username");
 //            String username = fetchInstagramUsername(longAccessToken, instagramUserId);
 //            log.info("Instagram username fetched: {}", username);
 //
-//            // STEP 4: Check if already exists
-//            log.info("Step 4: Checking if Instagram account already connected");
-//            OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
-//                    userId, Provider.INSTAGRAM, instagramUserId
-//            );
-//            if (existingAuthInfo != null) {
-//                log.warn("Instagram account {} already connected for user {}", instagramUserId, userId);
-//                throw new RuntimeException("Instagram account already connected");
-//            }
+
 //
 //            // STEP 5: Save everything
 //            log.info("Step 5: Saving OAuth info to database");
@@ -98,22 +119,6 @@ public class InstagramOAuthService {
 //            log.info("Token starts with: {}", longAccessToken.substring(0, Math.min(10, longAccessToken.length())));
 //            log.info("==============================");
 //
-//            OAuthInfoEntity oAuthInfo = new OAuthInfoEntity();
-//            oAuthInfo.setProvider(Provider.INSTAGRAM);
-//            oAuthInfo.setUserId(userId);
-//            oAuthInfo.setAccessToken(longAccessToken);
-//            var timeInMillis = System.currentTimeMillis() + expiresIn * 1000L;
-//            oAuthInfo.setExpiresAt(timeInMillis);
-//            oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(timeInMillis));
-//            oAuthInfo.setProviderUserId(instagramUserId);
-//
-//            AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
-//            additional.setInstagramBusinessId(instagramUserId);
-//
-//            oAuthInfo.setAdditionalInfo(additional);
-//            repo.save(oAuthInfo);
-//
-//            log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", userId, instagramUserId);
 
         } catch (Exception e) {
             log.error("Error during Instagram OAuth callback: {}", e.getMessage(), e);
@@ -142,6 +147,13 @@ public class InstagramOAuthService {
 
             log.info("Sending POST request to exchange code for token");
             Map<String, Object> response = rest.postForObject(url, request, Map.class);
+            /*
+            SUCCESS Response structure:
+              {
+              access_token=GAAQQotZCvQmNBZA....,
+              user_id=25223281824604,
+              permissions=[instagram_business_basic]}
+             */
 
             if (response == null || !response.containsKey("access_token")) {
                 throw new RuntimeException("Did not receive an access token in the response.");
@@ -157,25 +169,45 @@ public class InstagramOAuthService {
         }
     }
 
+
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
+        // Step 1: Set up the URL and parameters
+        String url = "https://graph.instagram.com/access_token";
+        String clientSecret = appSecret;
+        String accessToken = shortAccessToken;
+        String grantType = "ig_exchange_token";
 
-        // Use a builder pattern to ensure the URI is absolute and correctly encoded
-        String url = UriComponentsBuilder.fromHttpUrl("graph.instagram.com")
-                .queryParam("grant_type", "ig_exchange_token")
-                .queryParam("client_secret", appSecret)
-                .queryParam("access_token", shortAccessToken)
-                .toUriString();
+        // Step 2: Prepare the query parameters
+        String params = "grant_type=" + grantType + "&client_secret=" + clientSecret + "&access_token=" + accessToken;
 
-        log.info("Sending GET request to exchange for a long-lived token. URL: {}", url.replace(appSecret, "***SECRET***").replace(shortAccessToken, "***TOKEN***"));
+        // Step 3: Create the URL with query parameters
+        String fullUrl = url + "?" + params;
 
         try {
-            Map<String, Object> response = rest.getForObject(url, Map.class);
+            // Step 5: Make the GET request
+            ResponseEntity<Map<String, Object>> response = rest.exchange(
+                    fullUrl,
+                    HttpMethod.GET,
+                    null,
+                    new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            /*
+               SUCCESS Response Structure:
+                  {
+                    "access_token": "new-token-here",
+                    "token_type": "bearer",
+                    "expires_in": 5183944
+                   }
+             */
 
-            if (response == null || !response.containsKey("access_token")) {
-                throw new RuntimeException("Did not receive a long-lived access token in the response.");
+
+            // Step 6: Print the response
+            if (response.getStatusCode() == HttpStatus.OK) {
+                System.out.println("Response Body: " + response.getBody());
+                return response.getBody();
+            }else{
+                throw new RuntimeException("Failed to exchange for long-lived token");
             }
-
-            return response;
         } catch (Exception e) {
             log.error("Failed to exchange for long-lived token: {}", e.getMessage());
             throw new RuntimeException("Failed to exchange for long-lived token: " + e.getMessage());
