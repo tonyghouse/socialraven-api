@@ -25,43 +25,41 @@ public class InstagramProfileService {
             String accessToken = info.getAccessToken();
 
             log.info("Fetching Instagram profile for user ID: {}", userId);
+            log.debug("Access token (first 20 chars): {}...", accessToken.substring(0, Math.min(20, accessToken.length())));
+            log.debug("Token expires at: {}, Current time: {}, Is expired: {}",
+                    info.getExpiresAt(),
+                    System.currentTimeMillis(),
+                    info.getExpiresAt() < System.currentTimeMillis());
 
-            // Fetch Instagram Business Account profile
+            // Simplified Instagram profile fetch
             String url = String.format(
-                "https://graph.instagram.com/%s?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count,account_type&access_token=%s",
-                userId, accessToken
+                    "https://graph.facebook.com/v21.0/%s?fields=username,profile_picture_url&access_token=%s",
+                    userId, accessToken
             );
 
-            log.debug("Instagram profile API URL: {}", url.replace(accessToken, "***"));
+            log.info("Making request to Instagram API...");
 
             ResponseEntity<Map> response = rest.exchange(
-                url,
-                HttpMethod.GET,
-                new HttpEntity<>(new HttpHeaders()),
-                Map.class
+                    url,
+                    HttpMethod.GET,
+                    new HttpEntity<>(new HttpHeaders()),
+                    Map.class
             );
 
             Map body = response.getBody();
             log.info("Instagram profile fetched successfully for user: {}", body.get("username"));
-            log.debug("Instagram profile response: {}", body);
 
             ConnectedAccount dto = new ConnectedAccount();
             dto.setProviderUserId(info.getProviderUserId());
             dto.setPlatform(Platform.instagram);
             dto.setUsername((String) body.get("username"));
-            
-            // Instagram provides profile_picture_url directly
             dto.setProfilePicLink((String) body.get("profile_picture_url"));
-            
-            // Optional: Add additional metadata if your DTO supports it
-            // dto.setDisplayName((String) body.get("name"));
-            // dto.setFollowersCount((Integer) body.get("followers_count"));
-            // dto.setAccountType((String) body.get("account_type")); // BUSINESS, CREATOR, etc.
 
             return dto;
 
         } catch (Exception exp) {
             log.error("Instagram Profile fetching Failed: {}", exp.getMessage(), exp);
+            log.error("Full error: ", exp);
             return null;
         }
     }
