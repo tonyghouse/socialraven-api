@@ -14,6 +14,7 @@ import java.util.List;
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import redis.clients.jedis.JedisPool;
 
 
 @Service
+@Slf4j
 public class ProfileService {
 
     @Autowired
@@ -74,8 +76,6 @@ public class ProfileService {
                 if (isProd) {
                     var validOAuthInfo = xoAuthService.getValidOAuthInfo(authInfo);
                     connectedAccount = xProfileService.fetchProfile(validOAuthInfo);
-                } else {
-                    connectedAccount = null;
                 }
             } else if (Provider.LINKEDIN.equals(authInfo.getProvider())) {
                 long now = System.currentTimeMillis();
@@ -141,8 +141,9 @@ public class ProfileService {
     private ConnectedAccount getExpiredAuthInfoModel(OAuthInfoEntity authInfo) {
         ConnectedAccount connected = new ConnectedAccount();
         connected.setProviderUserId(authInfo.getProviderUserId());
-        connected.setPlatform(ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider()));
-        connected.setUsername("RE AUTHORIZE");
+        Platform platform = ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider());
+        connected.setPlatform(platform);
+        connected.setUsername("RE AUTHORIZE" + platform.name()+" User: "+authInfo.getProviderUserId());
         connected.setProfilePicLink("");
         return connected;
     }
@@ -151,10 +152,12 @@ public class ProfileService {
     private static ConnectedAccount mapToUnknownConnectedAccount(OAuthInfoEntity authInfo, String providerUserId) {
         ConnectedAccount connected = new ConnectedAccount();
         connected.setProviderUserId(providerUserId);
-        connected.setPlatform(ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider()));
-        connected.setUsername("UNKNOWN");
+        Platform platform = ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider());
+        connected.setPlatform(platform);
+        connected.setUsername(platform.name()+" User: "+providerUserId);
         connected.setProfilePicLink(null);
         return connected;
     }
+
 
 }

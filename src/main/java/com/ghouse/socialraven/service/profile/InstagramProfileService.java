@@ -37,7 +37,7 @@ public class InstagramProfileService {
 
             if (response == null) {
                 log.error("Empty response from Instagram API");
-                return createFallbackProfile(info);
+                return null;
             }
 
             log.info("Instagram profile fetched successfully: {}", response.get("username"));
@@ -53,19 +53,7 @@ public class InstagramProfileService {
         } catch (Exception exp) {
             log.error("Instagram Profile fetching Failed: {}", exp.getMessage(), exp);
             log.error("Full stack trace:", exp);
-            return createFallbackProfile(info);
+            return null;
         }
-    }
-
-    private ConnectedAccount createFallbackProfile(OAuthInfoEntity info) {
-        log.info("Creating fallback profile for Instagram user: {}", info.getProviderUserId());
-
-        ConnectedAccount dto = new ConnectedAccount();
-        dto.setProviderUserId(info.getProviderUserId());
-        dto.setPlatform(Platform.instagram);
-        dto.setUsername("Instagram User");
-        dto.setProfilePicLink(null);
-
-        return dto;
     }
 }
