@@ -42,7 +42,6 @@ public class LinkedInOAuthService {
 
     public void exchangeCodeForToken(String code) {
 
-        System.out.println("Redirect URI used in backend = " + redirectUri);
         RestTemplate rest = new RestTemplate();
 
         // Prepare params
