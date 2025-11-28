@@ -20,40 +20,43 @@ public class InstagramProfileService {
             String accessToken = info.getAccessToken();
             String userId = info.getProviderUserId();
 
-            log.info("=== DEBUGGING TOKEN FROM DATABASE ===");
-            log.info("Provider User ID: {}", userId);
-            log.info("Token is null: {}", accessToken == null);
-            log.info("Token length: {}", accessToken != null ? accessToken.length() : "null");
-            log.info("Token full value: {}", accessToken); // YES, LOG THE FULL TOKEN FOR NOW
-            log.info("Token first 50 chars: {}", accessToken != null && accessToken.length() > 50
-                    ? accessToken.substring(0, 50)
-                    : accessToken);
-            log.info("Token contains newlines: {}", accessToken != null && accessToken.contains("\n"));
-            log.info("Token contains carriage returns: {}", accessToken != null && accessToken.contains("\r"));
-            log.info("Token has leading spaces: {}", accessToken != null && !accessToken.equals(accessToken.trim()));
+            // Always trim the token in case of whitespace issues from storage/retrieval
+            final String cleanAccessToken = accessToken.trim();
+            final String cleanUserId = userId.trim();
+
+            log.info("=== DEBUGGING TOKEN FROM DATABASE (Trimmed) ===");
+            log.info("Provider User ID: {}", cleanUserId);
+            log.info("Token length: {}", cleanAccessToken.length());
+            // It is generally bad practice to log full tokens in production. Use log level DEBUG if necessary.
+            log.debug("Token full value: {}", cleanAccessToken);
             log.info("=====================================");
 
-            // Use the user_id directly to fetch basic profile
-            String url = "https://graph.facebook.com/v21.0/" + userId +
-                    "?fields=username,profile_picture_url" +
-                    "&access_token=" + accessToken.trim(); // Trim it!
+            // **FIXED:** Use the correct Instagram Graph API domain (graph.instagram.com)
+            // and fields that are guaranteed to be available (username and id).
+            String url = "https://graph.instagram.com/me" +
+                    "?fields=id,username" + // profile_picture_url is not a standard field here
+                    "&access_token=" + cleanAccessToken;
 
-            log.info("Making API call to: {}", url.replace(accessToken.trim(), "***TOKEN***"));
+            log.info("Making API call to: {}", url.replace(cleanAccessToken, "***TOKEN***"));
 
-            Map response = rest.getForObject(url, Map.class);
+            Map<String, Object> response = rest.getForObject(url, Map.class);
 
-            if (response == null) {
-                log.error("Empty response from Instagram API");
+            if (response == null || response.get("username") == null) {
+                log.error("Invalid or empty response from Instagram API, or missing username field.");
                 return null;
             }
 
-            log.info("SUCCESS! Instagram profile fetched: {}", response.get("username"));
+            String fetchedUsername = (String) response.get("username");
+            log.info("SUCCESS! Instagram profile fetched: {}", fetchedUsername);
 
             ConnectedAccount dto = new ConnectedAccount();
-            dto.setProviderUserId(userId);
+            dto.setProviderUserId(cleanUserId);
             dto.setPlatform(Platform.instagram);
-            dto.setUsername((String) response.get("username"));
-            dto.setProfilePicLink((String) response.get("profile_picture_url"));
+            dto.setUsername(fetchedUsername);
+
+            // Note: We cannot reliably fetch the profile picture URL using this endpoint alone.
+            // If the application needs a profile picture, a different approach (like a separate API request to a user picture endpoint, or potentially scraping with caution) would be needed, which is outside the scope of this fix.
+            dto.setProfilePicLink(null);
 
             return dto;
 
@@ -62,6 +65,4 @@ public class InstagramProfileService {
             return null;
         }
     }
-
-
 }
