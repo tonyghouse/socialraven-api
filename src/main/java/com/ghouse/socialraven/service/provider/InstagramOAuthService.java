@@ -99,27 +99,6 @@ public class InstagramOAuthService {
             repo.save(oAuthInfo);
             log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", userId, instagramUserId);
 
-
-//
-//            // STEP 3: Get Instagram username (optional but nice to have)
-//            log.info("Step 3: Fetching Instagram username");
-//            String username = fetchInstagramUsername(longAccessToken, instagramUserId);
-//            log.info("Instagram username fetched: {}", username);
-//
-
-//
-//            // STEP 5: Save everything
-//            log.info("Step 5: Saving OAuth info to database");
-//            log.info("====== TOKEN DEBUG INFO ======");
-//            log.info("Access Token Length: {}", longAccessToken.length());
-//            log.info("Access Token First 50 chars: {}", longAccessToken.substring(0, Math.min(50, longAccessToken.length())));
-//            log.info("Access Token Last 20 chars: {}", longAccessToken.substring(Math.max(0, longAccessToken.length() - 20)));
-//            log.info("Token contains spaces: {}", longAccessToken.contains(" "));
-//            log.info("Token contains quotes: {}", longAccessToken.contains("\""));
-//            log.info("Token starts with: {}", longAccessToken.substring(0, Math.min(10, longAccessToken.length())));
-//            log.info("==============================");
-//
-
         } catch (Exception e) {
             log.error("Error during Instagram OAuth callback: {}", e.getMessage(), e);
             throw e;
@@ -172,7 +151,8 @@ public class InstagramOAuthService {
 
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
         // Step 1: Set up the URL and parameters
-        String url = "https://graph.instagram.com/access_token";
+//        String url = "https://graph.instagram.com/access_token";
+        String url = "https://api.instagram.com/oauth/access_token";
         String clientSecret = appSecret;
         String accessToken = shortAccessToken;
         String grantType = "ig_exchange_token";
@@ -215,65 +195,7 @@ public class InstagramOAuthService {
     }
 
 
-    private String fetchInstagramUsername(String accessToken, String userId) {
-        String url = String.format(
-                "graph.instagram.com",
-                userId, accessToken
-        );
-
-        log.debug("Fetching Instagram username from: {}", url.replace(accessToken, "***"));
-
-        try {
-            Map<String, Object> response = rest.getForObject(url, Map.class);
-            log.debug("Instagram username response: {}", response);
-            return (String) response.get("username");
-
-        } catch (Exception e) {
-            log.warn("Failed to fetch Instagram username (non-critical): {}", e.getMessage());
-            return "unknown";
-        }
-    }
-
-
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
-        long now = System.currentTimeMillis();
-
-        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
-            return info;
-        }
-
-        return refreshAccessToken(info);
-    }
-
-    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
-        try {
-            // Using UriComponentsBuilder here too for consistency and safety
-            String url = UriComponentsBuilder.fromHttpUrl("graph.instagram.com")
-                    .queryParam("grant_type", "ig_refresh_token")
-                    .queryParam("access_token", info.getAccessToken())
-                    .toUriString();
-
-            log.info("Refreshing Instagram long-lived token for IG User {}", info.getProviderUserId());
-
-            Map<String, Object> response = rest.getForObject(url, Map.class);
-
-            if (response == null || response.get("access_token") == null) {
-                throw new RuntimeException("Token refresh failed: No token in response.");
-            }
-
-            info.setAccessToken((String) response.get("access_token"));
-            Long expiresIn = ((Number) response.get("expires_in")).longValue();
-            long timeInMillis = System.currentTimeMillis() + expiresIn * 1000L;
-            info.setExpiresAt(timeInMillis);
-            info.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(timeInMillis));
-
-            repo.save(info);
-            log.info("Token refresh successful for IG User {}", info.getProviderUserId());
-            return info;
-
-        } catch (Exception e) {
-            log.error("Failed to refresh token for IG User {}: {}", info.getProviderUserId(), e.getMessage());
-            throw new RuntimeException("Failed to refresh Instagram access token: " + e.getMessage());
-        }
+        return info;
     }
 }
