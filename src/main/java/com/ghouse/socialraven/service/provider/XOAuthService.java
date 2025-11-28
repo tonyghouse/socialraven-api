@@ -38,12 +38,13 @@ public class XOAuthService {
 
     @Value("${x.callback.uri}")
     private String callbackUri;
-    // must equal NEXT_PUBLIC_X_REDIRECT_URI
 
     private final OAuthInfoRepo repo;
     private final RestTemplate rest = new RestTemplate();
 
     public ConnectedAccount handleCallback(XOAuthCallbackRequest req) {
+
+        log.info("X OAuth with clientId:{} and CallBackUrl: {}",clientId,callbackUri);
 
         // 1) Exchange code for tokens
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
