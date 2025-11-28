@@ -58,7 +58,6 @@ public class InstagramOAuthService {
             Map<String, Object> longLivedTokenResponse = exchangeForLongLivedToken(accessToken);
 
             String longAccessToken = (String) longLivedTokenResponse.get("access_token");
-            // Fixed the data type retrieval here
             Long expiresIn = ((Number) longLivedTokenResponse.get("expires_in")).longValue();
 
             log.info("Successfully obtained long-lived access token. Expires in: {} seconds, Instagram User ID: {}",
@@ -100,6 +99,7 @@ public class InstagramOAuthService {
             oAuthInfo.setProviderUserId(instagramUserId);
 
             AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
+            additional.setInstagramBusinessId(instagramUserId);
 
             oAuthInfo.setAdditionalInfo(additional);
             repo.save(oAuthInfo);
@@ -113,7 +113,8 @@ public class InstagramOAuthService {
     }
 
     private Map<String, Object> exchangeForAccessToken(String code) {
-        String url = "api.instagram.com";
+        // Use UriComponentsBuilder to guarantee an absolute URI is formed correctly
+        String url = UriComponentsBuilder.fromHttpUrl("api.instagram.com").toUriString();
 
         log.debug("Exchange token URL: {}", url);
         log.debug("Using appId: {}, redirectUri: {}", appId, redirectUri);
@@ -148,9 +149,9 @@ public class InstagramOAuthService {
         }
     }
 
-    // **FIXED METHOD**
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
 
+        // Use a builder pattern to ensure the URI is absolute and correctly encoded
         String url = UriComponentsBuilder.fromHttpUrl("graph.instagram.com")
                 .queryParam("grant_type", "ig_exchange_token")
                 .queryParam("client_secret", appSecret)
