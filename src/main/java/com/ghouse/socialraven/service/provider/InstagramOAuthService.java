@@ -4,9 +4,6 @@ import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
-
-import java.util.Map;
-
 import com.ghouse.socialraven.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder; // Added import
+
+import java.util.Map;
 
 @Service
 public class InstagramOAuthService {
@@ -39,21 +39,17 @@ public class InstagramOAuthService {
 
     @Autowired
     private RestTemplate rest;
-    // private long timeInMillis; // This variable was unused and is removed.
 
     public void handleCallback(String code, String userId) {
         log.info("Starting Instagram OAuth callback for userId: {}", userId);
         log.debug("Received code: {}", code);
 
         try {
-            // STEP 1: Exchange code → short-lived token (The existing method already handles the immediate exchange correctly)
+            // STEP 1: Exchange code → short-lived token
             log.info("Step 1: Exchanging code for initial access token");
             Map<String, Object> tokenResponse = exchangeForAccessToken(code);
 
             String accessToken = (String) tokenResponse.get("access_token");
-            // The initial token response has "user_id" but not "expires_in" in the basic flow
-            // We need to exchange again for the long-lived one if required immediately
-
             Long instagramUserIdLong = ((Number) tokenResponse.get("user_id")).longValue();
             String instagramUserId = String.valueOf(instagramUserIdLong);
 
@@ -104,7 +100,6 @@ public class InstagramOAuthService {
             oAuthInfo.setProviderUserId(instagramUserId);
 
             AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
-            additional.setInstagramBusinessId(instagramUserId); // Assuming this holds IG User ID for now
 
             oAuthInfo.setAdditionalInfo(additional);
             repo.save(oAuthInfo);
@@ -117,15 +112,13 @@ public class InstagramOAuthService {
         }
     }
 
-    // Renamed this method to be more accurate (initial code exchange)
     private Map<String, Object> exchangeForAccessToken(String code) {
-        String url = "https://api.instagram.com/oauth/access_token";
+        String url = "api.instagram.com";
 
         log.debug("Exchange token URL: {}", url);
         log.debug("Using appId: {}, redirectUri: {}", appId, redirectUri);
 
         try {
-            // Prepare form data
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -155,15 +148,18 @@ public class InstagramOAuthService {
         }
     }
 
-    // Created a separate method for exchanging for a long-lived token from a short-lived one
+    // **FIXED METHOD**
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
-        // Use the Graph API endpoint for exchanging for a long-lived token
-        String url = String.format("graph.instagram.com",
-                appSecret, shortAccessToken);
 
-        log.info("Sending GET request to exchange for a long-lived token");
+        String url = UriComponentsBuilder.fromHttpUrl("graph.instagram.com")
+                .queryParam("grant_type", "ig_exchange_token")
+                .queryParam("client_secret", appSecret)
+                .queryParam("access_token", shortAccessToken)
+                .toUriString();
+
+        log.info("Sending GET request to exchange for a long-lived token. URL: {}", url.replace(appSecret, "***SECRET***").replace(shortAccessToken, "***TOKEN***"));
+
         try {
-            // The exchange for a long-lived token uses a GET request
             Map<String, Object> response = rest.getForObject(url, Map.class);
 
             if (response == null || !response.containsKey("access_token")) {
@@ -179,9 +175,8 @@ public class InstagramOAuthService {
 
 
     private String fetchInstagramUsername(String accessToken, String userId) {
-        // Use the correct Instagram Graph API endpoint with GET for user details
         String url = String.format(
-                "https://graph.instagram.com/%s?fields=username&access_token=%s",
+                "graph.instagram.com",
                 userId, accessToken
         );
 
@@ -194,48 +189,43 @@ public class InstagramOAuthService {
 
         } catch (Exception e) {
             log.warn("Failed to fetch Instagram username (non-critical): {}", e.getMessage());
-            return "unknown"; // Fallback if username fetch fails
+            return "unknown";
         }
     }
 
 
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
-
         long now = System.currentTimeMillis();
 
-        // 1. If token still valid (> 24 hours remaining) → return it
-        // Refresh 24 hours before expiry to be safe
         if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
             return info;
         }
 
-        // 2. Expired or near expiry → refresh
         return refreshAccessToken(info);
     }
 
     private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
         try {
-            String url = "https://graph.instagram.com/refresh_access_token" +
-                    "?grant_type=ig_refresh_token" +
-                    "&access_token=" + info.getAccessToken();
+            // Using UriComponentsBuilder here too for consistency and safety
+            String url = UriComponentsBuilder.fromHttpUrl("graph.instagram.com")
+                    .queryParam("grant_type", "ig_refresh_token")
+                    .queryParam("access_token", info.getAccessToken())
+                    .toUriString();
 
             log.info("Refreshing Instagram long-lived token for IG User {}", info.getProviderUserId());
 
             Map<String, Object> response = rest.getForObject(url, Map.class);
 
             if (response == null || response.get("access_token") == null) {
-                // Fixed the logic flow and error handling here
                 throw new RuntimeException("Token refresh failed: No token in response.");
             }
 
-            // Update entity with new token info
             info.setAccessToken((String) response.get("access_token"));
-            Long expiresIn = ((Number) response.get("expires_in")).longValue(); // Fixed data type
+            Long expiresIn = ((Number) response.get("expires_in")).longValue();
             long timeInMillis = System.currentTimeMillis() + expiresIn * 1000L;
             info.setExpiresAt(timeInMillis);
             info.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(timeInMillis));
 
-            // Save the refreshed info back to the database
             repo.save(info);
             log.info("Token refresh successful for IG User {}", info.getProviderUserId());
             return info;
