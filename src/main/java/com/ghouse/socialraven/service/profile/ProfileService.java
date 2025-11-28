@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,12 @@ public class ProfileService {
 
     @Autowired
     private YouTubeOAuthService youTubeOAuthService;
+
+    @Autowired
+    private InstagramProfileService instagramProfileService;
+
+    @Autowired
+    private InstagramOAuthService instagramOAuthService;
 
     @Autowired
     private Environment environment;
@@ -81,6 +88,11 @@ public class ProfileService {
             } else if (Provider.YOUTUBE.equals(authInfo.getProvider())) {
                 var validOAuthInfo = youTubeOAuthService.getValidOAuthInfo(authInfo);
                 connectedAccount = youTubeProfileService.fetchProfile(validOAuthInfo);
+            } else if (Provider.INSTAGRAM.equals(authInfo.getProvider())) {
+                var validOAuthInfo = instagramOAuthService.getValidOAuthInfo(authInfo);
+                connectedAccount = instagramProfileService.fetchProfile(validOAuthInfo);
+            } else{
+                connectedAccount=null;
             }
 
             // If provider returned valid data → STORE IN REDIS for 24 hours
