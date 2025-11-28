@@ -20,18 +20,25 @@ public class InstagramProfileService {
             String accessToken = info.getAccessToken();
             String userId = info.getProviderUserId();
 
-            log.info("Fetching Instagram profile for user ID: {}", userId);
-            log.info("Token length: {}, First 20 chars: {}",
-                    accessToken.length(),
-                    accessToken.substring(0, Math.min(20, accessToken.length())));
+            log.info("=== DEBUGGING TOKEN FROM DATABASE ===");
+            log.info("Provider User ID: {}", userId);
+            log.info("Token is null: {}", accessToken == null);
+            log.info("Token length: {}", accessToken != null ? accessToken.length() : "null");
+            log.info("Token full value: {}", accessToken); // YES, LOG THE FULL TOKEN FOR NOW
+            log.info("Token first 50 chars: {}", accessToken != null && accessToken.length() > 50
+                    ? accessToken.substring(0, 50)
+                    : accessToken);
+            log.info("Token contains newlines: {}", accessToken != null && accessToken.contains("\n"));
+            log.info("Token contains carriage returns: {}", accessToken != null && accessToken.contains("\r"));
+            log.info("Token has leading spaces: {}", accessToken != null && !accessToken.equals(accessToken.trim()));
+            log.info("=====================================");
 
             // Use the user_id directly to fetch basic profile
-            // Build URL without String.format to avoid {} issues
             String url = "https://graph.facebook.com/v21.0/" + userId +
                     "?fields=username,profile_picture_url" +
-                    "&access_token=" + accessToken;
+                    "&access_token=" + accessToken.trim(); // Trim it!
 
-            log.info("Fetching Instagram profile directly");
+            log.info("Making API call to: {}", url.replace(accessToken.trim(), "***TOKEN***"));
 
             Map response = rest.getForObject(url, Map.class);
 
@@ -40,7 +47,7 @@ public class InstagramProfileService {
                 return null;
             }
 
-            log.info("Instagram profile fetched successfully: {}", response.get("username"));
+            log.info("SUCCESS! Instagram profile fetched: {}", response.get("username"));
 
             ConnectedAccount dto = new ConnectedAccount();
             dto.setProviderUserId(userId);
@@ -52,8 +59,9 @@ public class InstagramProfileService {
 
         } catch (Exception exp) {
             log.error("Instagram Profile fetching Failed: {}", exp.getMessage(), exp);
-            log.error("Full stack trace:", exp);
             return null;
         }
     }
+
+
 }

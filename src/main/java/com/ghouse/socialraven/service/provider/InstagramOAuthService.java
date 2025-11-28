@@ -52,9 +52,7 @@ public class InstagramOAuthService {
             Map<String, Object> tokenResponse = exchangeForLongLivedToken(code);
 
             String longAccessToken = (String) tokenResponse.get("access_token");
-            Long expiresIn = tokenResponse.get("expires_in") != null
-                    ? ((Number) tokenResponse.get("expires_in")).longValue()
-                    : 5183944L; // Default ~60 days for IG long-lived tokens
+            Long expiresIn = ((Number) tokenResponse.get("expires_in")).longValue();
 
             // Instagram User ID comes in the token response!
             Long instagramUserIdLong = ((Number) tokenResponse.get("user_id")).longValue();
