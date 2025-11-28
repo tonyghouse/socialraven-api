@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -21,46 +22,71 @@ public class InstagramProfileService {
 
     public ConnectedAccount fetchProfile(OAuthInfoEntity info) {
         try {
-            String userId = info.getProviderUserId();
             String accessToken = info.getAccessToken();
+            
+            log.info("Fetching Instagram profile via Facebook Graph API");
+            log.info("Token length: {}, First 20 chars: {}", 
+                accessToken.length(), 
+                accessToken.substring(0, Math.min(20, accessToken.length())));
 
-            log.info("Fetching Instagram profile for user ID: {}", userId);
-            log.debug("Access token (first 20 chars): {}...", accessToken.substring(0, Math.min(20, accessToken.length())));
-            log.debug("Token expires at: {}, Current time: {}, Is expired: {}",
-                    info.getExpiresAt(),
-                    System.currentTimeMillis(),
-                    info.getExpiresAt() < System.currentTimeMillis());
-
-            // Simplified Instagram profile fetch
-            String url = String.format(
-                    "https://graph.facebook.com/v21.0/%s?fields=username,profile_picture_url&access_token=%s",
-                    userId, accessToken
+            // STEP 1: Get user's Facebook pages with Instagram accounts
+            String pagesUrl = String.format(
+                "https://graph.facebook.com/v21.0/me/accounts?fields=instagram_business_account{username,profile_picture_url}&access_token=%s",
+                accessToken
             );
 
-            log.info("Making request to Instagram API...");
+            log.info("Fetching Facebook pages with Instagram accounts");
 
-            ResponseEntity<Map> response = rest.exchange(
-                    url,
-                    HttpMethod.GET,
-                    new HttpEntity<>(new HttpHeaders()),
-                    Map.class
+            ResponseEntity<Map> pagesResponse = rest.exchange(
+                pagesUrl,
+                HttpMethod.GET,
+                new HttpEntity<>(new HttpHeaders()),
+                Map.class
             );
 
-            Map body = response.getBody();
-            log.info("Instagram profile fetched successfully for user: {}", body.get("username"));
+            Map pagesBody = pagesResponse.getBody();
+            List<Map<String, Object>> pages = (List<Map<String, Object>>) pagesBody.get("data");
 
-            ConnectedAccount dto = new ConnectedAccount();
-            dto.setProviderUserId(info.getProviderUserId());
-            dto.setPlatform(Platform.instagram);
-            dto.setUsername((String) body.get("username"));
-            dto.setProfilePicLink((String) body.get("profile_picture_url"));
+            if (pages == null || pages.isEmpty()) {
+                log.error("No Facebook Pages found");
+                return createFallbackProfile(info);
+            }
 
-            return dto;
+            // STEP 2: Find page with Instagram account
+            for (Map<String, Object> page : pages) {
+                Map<String, Object> igAccount = (Map<String, Object>) page.get("instagram_business_account");
+                
+                if (igAccount != null) {
+                    log.info("Found Instagram account: {}", igAccount.get("username"));
+                    
+                    ConnectedAccount dto = new ConnectedAccount();
+                    dto.setProviderUserId(info.getProviderUserId());
+                    dto.setPlatform(Platform.instagram);
+                    dto.setUsername((String) igAccount.get("username"));
+                    dto.setProfilePicLink((String) igAccount.get("profile_picture_url"));
+                    
+                    return dto;
+                }
+            }
+
+            log.warn("No Instagram Business Account found on any page");
+            return createFallbackProfile(info);
 
         } catch (Exception exp) {
             log.error("Instagram Profile fetching Failed: {}", exp.getMessage(), exp);
-            log.error("Full error: ", exp);
-            return null;
+            return createFallbackProfile(info);
         }
+    }
+
+    private ConnectedAccount createFallbackProfile(OAuthInfoEntity info) {
+        log.info("Creating fallback profile for Instagram user: {}", info.getProviderUserId());
+        
+        ConnectedAccount dto = new ConnectedAccount();
+        dto.setProviderUserId(info.getProviderUserId());
+        dto.setPlatform(Platform.instagram);
+        dto.setUsername("Instagram User " + info.getProviderUserId().substring(0, 8));
+        dto.setProfilePicLink(null);
+        
+        return dto;
     }
 }
