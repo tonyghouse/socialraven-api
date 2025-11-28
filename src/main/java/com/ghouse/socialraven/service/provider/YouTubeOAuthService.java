@@ -112,7 +112,7 @@ public class YouTubeOAuthService {
         long now = System.currentTimeMillis();
 
         // Token still valid → return it
-        if (info.getExpiresAt() > now + 30_000) { // 30s safety buffer
+        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
             return info;
         }
 

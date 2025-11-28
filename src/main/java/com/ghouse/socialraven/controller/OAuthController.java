@@ -2,7 +2,7 @@ package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
-import com.ghouse.socialraven.service.provider.InstagramService;
+import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -13,7 +13,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -35,7 +34,7 @@ public class OAuthController {
     private XOAuthService xOAuthService;
 
     @Autowired
-    private InstagramService instagramService;
+    private InstagramOAuthService instagramOAuthService;
 
 
     @PostMapping("/x/callback")
@@ -70,7 +69,7 @@ public class OAuthController {
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        instagramService.handleCallback(body.get("code"), userId);
+        instagramOAuthService.handleCallback(body.get("code"), userId);
         return ResponseEntity.ok("Instagram connected");
     }
 

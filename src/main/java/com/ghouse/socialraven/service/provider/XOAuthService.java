@@ -144,7 +144,7 @@ public class XOAuthService {
         long now = System.currentTimeMillis();
 
         // 1. If token still valid → return it
-        if (info.getExpiresAt() > now) {
+        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
             return info;
         }
 

@@ -42,6 +42,7 @@ public class LinkedInOAuthService {
 
     public void exchangeCodeForToken(String code) {
 
+        System.out.println("Redirect URI used in backend = " + redirectUri);
         RestTemplate rest = new RestTemplate();
 
         // Prepare params
@@ -121,6 +122,22 @@ public class LinkedInOAuthService {
         );
 
         return resp.getBody();
+    }
+
+
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
+
+        long now = System.currentTimeMillis();
+
+        // 1. If token still valid → return it
+        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
+            return info;
+        }
+
+        //TODO-Implement refresh token from the linkedin accessToken (long lived accessToken of 60 days)
+        // 2. Expired → refresh
+        return info;
+        //return refreshAccessToken(info);
     }
 
 

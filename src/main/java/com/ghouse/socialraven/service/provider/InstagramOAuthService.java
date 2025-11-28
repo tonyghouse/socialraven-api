@@ -5,7 +5,6 @@ import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 
-import java.time.OffsetDateTime;
 import java.util.Map;
 
 import com.ghouse.socialraven.util.TimeUtil;
@@ -23,9 +22,9 @@ import org.springframework.web.client.RestTemplate;
 
 
 @Service
-public class InstagramService {
+public class InstagramOAuthService {
 
-    private static final Logger log = LoggerFactory.getLogger(InstagramService.class);
+    private static final Logger log = LoggerFactory.getLogger(InstagramOAuthService.class);
 
     @Value("${instagram.app.id}")
     private String appId;
@@ -156,4 +155,56 @@ public class InstagramService {
             return "unknown"; // Fallback if username fetch fails
         }
     }
+
+
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
+
+        long now = System.currentTimeMillis();
+
+        // 1. If token still valid → return it
+        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
+            return info;
+        }
+
+        // 2. Expired → refresh
+        return refreshAccessToken(info);
+    }
+
+    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+        try {
+            String url = "https://graph.instagram.com/refresh_access_token" +
+                    "?grant_type=ig_refresh_token" +
+                    "&access_token=" + info.getAccessToken();
+
+            log.info("Refreshing Instagram long-lived token for IG User {}", info.getProviderUserId());
+
+            Map<String, Object> response = rest.getForObject(url, Map.class);
+
+            if (response == null || response.get("access_token") == null) {
+                throw new RuntimeException("Invalid refresh response from Instagram.");
+            }
+
+            // Extract new token + expiry
+            String newAccessToken = (String) response.get("access_token");
+            Long expiresIn = ((Number) response.get("expires_in")).longValue(); // seconds
+
+            long newExpiryMillis = System.currentTimeMillis() + (expiresIn * 1000L);
+
+            // Update entity
+            info.setAccessToken(newAccessToken);
+            info.setExpiresAt(newExpiryMillis);
+            info.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(newExpiryMillis));
+
+            repo.save(info);
+
+            log.info("Instagram token refreshed successfully. New expiry: {}", newExpiryMillis);
+
+            return info;
+
+        } catch (Exception e) {
+            log.error("Failed to refresh Instagram token: {}", e.getMessage());
+            throw new RuntimeException("Instagram token refresh failed: " + e.getMessage());
+        }
+    }
+
 }
