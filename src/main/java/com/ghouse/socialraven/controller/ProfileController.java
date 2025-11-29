@@ -27,6 +27,9 @@ public class ProfileController {
             @RequestParam(value = "platform", required = false) Platform platform
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        if(platform==null){
+            return profileService.getAllConnectedAccounts(userId);
+        }
         return profileService.getConnectedAccounts(userId, platform);
     }
 
