@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.dto;
 
+import com.ghouse.socialraven.constant.PostType;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
@@ -11,6 +12,8 @@ public class SchedulePost {
     private String title;
 
     private String description;
+
+    private PostType postType;
 
     // Supports multiple files
     private List<PostMedia> media;

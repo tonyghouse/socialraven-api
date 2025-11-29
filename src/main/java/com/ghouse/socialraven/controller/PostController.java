@@ -34,7 +34,6 @@ public class PostController {
             @RequestParam(defaultValue = "POSTED") PostStatus postStatus
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        System.out.println("");
         return postService.getUserPosts(userId, page, postStatus);
     }
 

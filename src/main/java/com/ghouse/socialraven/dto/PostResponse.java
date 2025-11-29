@@ -14,9 +14,8 @@ public class PostResponse {
     private Long id;
     private String title;
     private String description;
-    private String provider;
     private String postStatus;
     private OffsetDateTime scheduledTime;
     private List<MediaResponse> media;
-    private List<String> userNames;
+    private List<ConnectedAccount> connectedAccounts;
 }

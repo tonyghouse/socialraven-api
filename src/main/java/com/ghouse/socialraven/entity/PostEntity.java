@@ -1,7 +1,7 @@
 package com.ghouse.socialraven.entity;
 
 import com.ghouse.socialraven.constant.PostStatus;
-import com.ghouse.socialraven.constant.Provider;
+import com.ghouse.socialraven.constant.PostType;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -13,7 +13,7 @@ import java.util.List;
 @Data
 @Entity
 @Table(name = "single_post")
-public class SinglePostEntity {
+public class PostEntity {
 
     @Id
     @GeneratedValue
@@ -21,14 +21,14 @@ public class SinglePostEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50, nullable = false)
+    private PostType postType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 50, nullable = false)
     private PostStatus postStatus;
 
     @Column(nullable = false)
     private String userId;
-
-    @Enumerated(EnumType.STRING)
-    @Column(length = 50, nullable = false)
-    private Provider provider;
 
     @Column(name = "provider_user_ids", columnDefinition = "text[]")
     @JdbcTypeCode(SqlTypes.ARRAY)

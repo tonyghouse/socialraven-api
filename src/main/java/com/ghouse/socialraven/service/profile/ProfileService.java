@@ -14,6 +14,7 @@ import java.util.List;
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
+import jakarta.annotation.Nonnull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
@@ -56,8 +57,13 @@ public class ProfileService {
     private Environment environment;
 
 
-    public List<ConnectedAccount> getConnectedAccounts(String userId, Platform platform) {
-        List<OAuthInfoEntity> authInfos = getOAuthInfos(userId, platform);
+    public List<ConnectedAccount> getConnectedAccounts(String userId, @Nonnull Platform platform) {
+        Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
+        List<OAuthInfoEntity> authInfos = repo.findAllByUserIdAndProvider(userId, provider);
+        return getConnectedAccounts(userId, authInfos);
+    }
+
+    private List<ConnectedAccount> getConnectedAccounts(String userId, List<OAuthInfoEntity> authInfos) {
         List<ConnectedAccount> connectedAccounts = new ArrayList<>();
 
         for (OAuthInfoEntity authInfo : authInfos) {
@@ -127,16 +133,12 @@ public class ProfileService {
         return cached;
     }
 
-    private List<OAuthInfoEntity> getOAuthInfos(String userId, Platform platform) {
-        Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
-        List<OAuthInfoEntity> authInfos;
-        if (provider != null) {
-            authInfos = repo.findAllByUserIdAndProvider(userId, provider);
-        } else {
-            authInfos = repo.findAllByUserId(userId);
-        }
-        return authInfos;
+
+    public List<ConnectedAccount> getAllConnectedAccounts(String userId) {
+        List<OAuthInfoEntity> authInfos =  authInfos = repo.findAllByUserId(userId);
+        return getConnectedAccounts(userId, authInfos);
     }
+
 
     private ConnectedAccount getExpiredAuthInfoModel(OAuthInfoEntity authInfo) {
         ConnectedAccount connected = new ConnectedAccount();

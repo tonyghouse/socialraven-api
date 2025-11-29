@@ -59,7 +59,6 @@ public class OAuthController {
     @PostMapping("/youtube/callback")
     public ResponseEntity<?> youtubeCallback(@RequestBody Map<String, String> body) {
         try {
-            log.info("Youtube callback request: {}", body);
             youtubeOAuthService.exchangeCodeForTokens(body.get("code"));
             return ResponseEntity.ok("YouTube connected");
         } catch (Exception exp) {

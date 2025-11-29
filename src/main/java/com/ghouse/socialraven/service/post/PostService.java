@@ -9,10 +9,11 @@ import com.ghouse.socialraven.dto.PostMedia;
 import com.ghouse.socialraven.dto.PostResponse;
 import com.ghouse.socialraven.dto.SchedulePost;
 import com.ghouse.socialraven.entity.PostMediaEntity;
-import com.ghouse.socialraven.entity.SinglePostEntity;
+import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.PostMediaRepo;
-import com.ghouse.socialraven.repo.SinglePostRepo;
+import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.service.profile.ProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
@@ -20,6 +21,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +33,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
 
 
 @Service
@@ -37,7 +42,7 @@ import org.springframework.util.CollectionUtils;
 public class PostService {
 
     @Autowired
-    private SinglePostRepo singlePostRepo;
+    private PostRepo postRepo;
 
     @Autowired
     private PostMediaRepo postMediaRepo;
@@ -45,18 +50,23 @@ public class PostService {
     @Autowired
     private StorageService storageService;
 
+    @Autowired
+    private ProfileService profileService;
+
+    @Autowired
+    private JedisPool jedisPool;
+
 
     public SchedulePost schedulePost(SchedulePost schedulePost) {
-        log.info("SchedulePost: {}", schedulePost);
-
         List<ConnectedAccount> connectedAccounts = schedulePost.getConnectedAccounts();
         if (CollectionUtils.isEmpty(connectedAccounts)) {
             throw new RuntimeException("Select connected accounts");
         }
 
-        SinglePostEntity post = new SinglePostEntity();
+        PostEntity post = new PostEntity();
 
         post.setPostStatus(PostStatus.SCHEDULED);
+        post.setPostType(schedulePost.getPostType());
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         post.setUserId(userId);
         post.setTitle(schedulePost.getTitle());
@@ -64,7 +74,6 @@ public class PostService {
         //Single provider
         Platform platform = connectedAccounts.stream().findFirst().get().getPlatform();
         Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
-        post.setProvider(provider);
         List<String> providerIds = connectedAccounts.stream().map(x -> x.getProviderUserId()).distinct().toList();
         post.setProviderUserIds(providerIds);
 
@@ -86,102 +95,89 @@ public class PostService {
 
         post.setMediaFiles(postMediaEntityList);
 
-        singlePostRepo.save(post);
+
+        PostEntity savedPost = postRepo.save(post);
+        Long postId = savedPost.getId();
+
+        // ---------------- REDIS SCHEDULING ------------------
+        OffsetDateTime scheduleTime = savedPost.getScheduledTime();
+        long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zadd("posts-pool-1", epochUtcMillis, postId.toString());
+            log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", postId, scheduleTime);
+        }
+
         return schedulePost;
     }
 
 
-
     public Page<PostResponse> getUserPosts(String userId, int page, PostStatus postStatus) {
-
         Pageable pageable;
-
         if (page == -1) {
             pageable = Pageable.unpaged();   // fetch all
         } else {
             pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
         }
 
-        Page<SinglePostEntity> postsPage =
-                singlePostRepo.findByUserIdAndPostStatusOrderByScheduledTimeDesc(
-                        userId,
-                        postStatus,
-                        pageable
-                );
+
+        List<ConnectedAccount> connectedAccounts = profileService.getAllConnectedAccounts(userId);
+
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
 
+        Page<PostEntity> postsPage = postRepo
+                .findByUserIdAndPostStatusOrderByScheduledTimeDesc(userId, postStatus, pageable);
+        return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
+    }
 
-        return postsPage.map(post -> {
+    private PostResponse getPostResponse(PostEntity post, Map<String, ConnectedAccount> connectedAccountMap) {
 
-            List<PostMediaEntity> mediaList = post.getMediaFiles();
+        List<String> providerUserIds = post.getProviderUserIds();
+        List<ConnectedAccount> connectedAccounts = new ArrayList<>();
+        for (String providerUserId : providerUserIds) {
+            ConnectedAccount connectedAccount = connectedAccountMap.get(providerUserId);
+            if (connectedAccount != null) {
+                connectedAccounts.add(connectedAccount);
+            }
+        }
+        List<PostMediaEntity> mediaList = post.getMediaFiles();
 
-            List<MediaResponse> mediaDtos =
-                    mediaList.stream().map(m ->
-                            new MediaResponse(
-                                    m.getId(),
-                                    m.getFileName(),
-                                    m.getMimeType(),
-                                    m.getSize(),
-                                    storageService.generatePresignedGetUrl(m.getFileKey()),
-                                    m.getFileKey()
-                            )
-                    ).toList();
+        List<MediaResponse> mediaDtos =
+                mediaList.stream().map(m ->
+                        new MediaResponse(
+                                m.getId(),
+                                m.getFileName(),
+                                m.getMimeType(),
+                                m.getSize(),
+                                storageService.generatePresignedGetUrl(m.getFileKey()),
+                                m.getFileKey()
+                        )
+                ).toList();
 
-            return new PostResponse(
-                    post.getId(),
-                    post.getTitle(),
-                    post.getDescription(),
-                    post.getProvider().toString(),
-                    post.getPostStatus().toString(),
-                    post.getScheduledTime(),
-                    mediaDtos,
-                    List.of("ashoka", "arjun")
-            );
-        });
+        return new PostResponse(
+                post.getId(),
+                post.getTitle(),
+                post.getDescription(),
+                post.getPostStatus().toString(),
+                post.getScheduledTime(),
+                mediaDtos,
+                connectedAccounts
+        );
     }
 
     public Page<PostResponse> getUserPosts(String userId) {
-        {
+        Pageable pageable = Pageable.unpaged();
+        List<ConnectedAccount> connectedAccounts = profileService.getAllConnectedAccounts(userId);
 
-            Pageable pageable = Pageable.unpaged();
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
+        Page<PostEntity> postsPage = postRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
 
-
-            Page<SinglePostEntity> postsPage =
-                    singlePostRepo.findByUserIdOrderByScheduledTimeDesc(
-                            userId,
-                            pageable
-                    );
-
-
-
-            return postsPage.map(post -> {
-
-                List<PostMediaEntity> mediaList = post.getMediaFiles();
-
-                List<MediaResponse> mediaDtos =
-                        mediaList.stream().map(m ->
-                                new MediaResponse(
-                                        m.getId(),
-                                        m.getFileName(),
-                                        m.getMimeType(),
-                                        m.getSize(),
-                                        storageService.generatePresignedGetUrl(m.getFileKey()),
-                                        m.getFileKey()
-                                )
-                        ).toList();
-
-                return new PostResponse(
-                        post.getId(),
-                        post.getTitle(),
-                        post.getDescription(),
-                        post.getProvider().toString(),
-                        post.getPostStatus().toString(),
-                        post.getScheduledTime(),
-                        mediaDtos,
-                        List.of("ashoka", "arjun")
-                );
-            });
-        }
+        return postsPage.map(post -> {
+            return getPostResponse(post, connectedAccountMap);
+        });
     }
 }
