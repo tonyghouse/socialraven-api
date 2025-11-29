@@ -42,7 +42,7 @@ public class XOAuthService {
     private final OAuthInfoRepo repo;
     private final RestTemplate rest = new RestTemplate();
 
-    public ConnectedAccount handleCallback(XOAuthCallbackRequest req) {
+    public void handleCallback(XOAuthCallbackRequest req) {
 
         log.info("X OAuth with clientId:{} and CallBackUrl: {}",clientId,callbackUri);
 
@@ -129,15 +129,6 @@ public class XOAuthService {
         }
 
         repo.save(info);
-
-        // 4) Return a DTO for frontend if needed
-        ConnectedAccount dto = new ConnectedAccount();
-        dto.setProviderUserId(info.getProviderUserId());
-        dto.setPlatform(Platform.x);
-        dto.setUsername(name);
-        dto.setProfilePicLink(profileImageUrl);
-
-        return dto;
     }
 
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {

@@ -42,11 +42,11 @@ public class OAuthController {
 
 
     @PostMapping("/x/callback")
-    public ResponseEntity<ConnectedAccount> handleCallback(
+    public ResponseEntity<String> handleCallback(
             @RequestBody XOAuthCallbackRequest request
     ) {
-        ConnectedAccount dto = xOAuthService.handleCallback(request);
-        return ResponseEntity.ok(dto);
+        xOAuthService.handleCallback(request);
+        return ResponseEntity.ok("X connected");
     }
 
 
