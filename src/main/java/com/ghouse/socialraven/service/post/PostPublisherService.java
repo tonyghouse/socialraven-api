@@ -30,9 +30,9 @@ public class PostPublisherService {
     public void publishPosts(List<Long> postIds) {
         for (Long postId : postIds) {
             log.info("Publishing post: {}", postId);
-            Optional<PostEntity> post = postRepo.findById(postId);
-            if (post.isPresent()) {
-                publishPost(post.get());
+            PostEntity post = postRepo.findByIdWithMedia(postId);
+            if (post !=null) {
+                publishPost(post);
             }
         }
 

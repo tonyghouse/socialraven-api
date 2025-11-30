@@ -27,7 +27,7 @@ public class PostScheduler {
     /**
      * Runs every 5 mins in UTC
      */
-    @Scheduled(cron = "0 */5 * * * *", zone = "UTC")
+    @Scheduled(cron = "0 */1 * * * *", zone = "UTC")
     public void schedulePosts() {
         log.info("Running Schedule Posts");
         String redisKey = "posts-pool-1";

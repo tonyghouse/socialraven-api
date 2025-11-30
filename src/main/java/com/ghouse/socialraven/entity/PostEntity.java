@@ -12,7 +12,7 @@ import java.util.List;
 
 @Data
 @Entity
-@Table(name = "single_post")
+@Table(name = "general_post")
 public class PostEntity {
 
     @Id
