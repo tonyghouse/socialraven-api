@@ -1,25 +1,27 @@
 // com.ghouse.socialraven.service.oauth.XOAuthService
 package com.ghouse.socialraven.service.provider;
 
-import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.constant.Provider;
-import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import io.micrometer.common.util.StringUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -39,12 +41,15 @@ public class XOAuthService {
     @Value("${x.callback.uri}")
     private String callbackUri;
 
-    private final OAuthInfoRepo repo;
-    private final RestTemplate rest = new RestTemplate();
+    @Autowired
+    private RestTemplate restTemplate;
+
+    @Autowired
+    private OAuthInfoRepo oAuthInfoRepo;
 
     public void handleCallback(XOAuthCallbackRequest req) {
 
-        log.info("X OAuth with clientId:{} and CallBackUrl: {}",clientId,callbackUri);
+        log.info("X OAuth with clientId:{} and CallBackUrl: {}", clientId, callbackUri);
 
         // 1) Exchange code for tokens
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -66,7 +71,7 @@ public class XOAuthService {
         HttpEntity<MultiValueMap<String, String>> entity =
                 new HttpEntity<>(form, headers);
 
-        ResponseEntity<Map> tokenResp = rest.postForEntity(
+        ResponseEntity<Map> tokenResp = restTemplate.postForEntity(
                 "https://api.twitter.com/2/oauth2/token",
                 entity,
                 Map.class
@@ -92,7 +97,7 @@ public class XOAuthService {
 
         HttpEntity<Void> profileEntity = new HttpEntity<>(profileHeaders);
 
-        ResponseEntity<Map> profileResp = rest.exchange(
+        ResponseEntity<Map> profileResp = restTemplate.exchange(
                 "https://api.twitter.com/2/users/me?user.fields=profile_image_url,name",
                 HttpMethod.GET,
                 profileEntity,
@@ -123,84 +128,181 @@ public class XOAuthService {
         add.setXRefreshToken(refreshToken);
         info.setAdditionalInfo(add);
 
-        OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.X, info.getProviderUserId());
+        OAuthInfoEntity existingAuthInfo = oAuthInfoRepo.findByUserIdAndProviderAndProviderUserId(userId, Provider.X, info.getProviderUserId());
         if (existingAuthInfo != null) {
             throw new RuntimeException("X OAuth already exist");
         }
 
-        repo.save(info);
+        oAuthInfoRepo.save(info);
     }
 
-    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
 
-        long now = System.currentTimeMillis();
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity authInfo) {
+        try {
+            long now = System.currentTimeMillis();
+            if (authInfo.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
+                return authInfo;
+            }
 
-        // 1. If token still valid → return it
-        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
-            return info;
+            // Check if refresh token exists
+            if (StringUtils.isEmpty(authInfo.getAdditionalInfo().getXRefreshToken())) {
+                throw new RuntimeException("No refresh token available. User needs to reconnect X account.");
+            }
+
+            // Token expired or about to expire, refresh it
+            log.info("X access token expired or expiring soon, refreshing...");
+            return refreshAccessToken(authInfo);
+
+        } catch (Exception e) {
+            log.error("Failed to get valid X OAuth info: {}", e.getMessage());
+            throw new RuntimeException("Cannot obtain valid X access token: " + e.getMessage(), e);
         }
-
-        // 2. Expired → refresh
-        return refreshAccessToken(info);
     }
 
-    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
 
-        String refreshToken = info.getAdditionalInfo().getXRefreshToken();
-        if (refreshToken == null) {
-            throw new RuntimeException("No X refresh token stored");
+    // X OAuth 2.0 Token Refresh - Correct Implementation
+
+    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity authInfo) {
+        String url = "https://api.twitter.com/2/oauth2/token";
+
+        try {
+            log.info("Refreshing X access token for user: {}", authInfo.getProviderUserId());
+
+            // X requires Basic Auth with client credentials
+            String credentials = clientId + ":" + clientSecret;
+            String encodedCredentials = Base64.getEncoder().encodeToString(credentials.getBytes());
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            headers.set("Authorization", "Basic " + encodedCredentials);
+
+            // Build form body
+            MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+            body.add("grant_type", "refresh_token");
+            body.add("refresh_token", authInfo.getAdditionalInfo().getXRefreshToken());
+            body.add("client_id", clientId);
+
+            HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
+
+            log.debug("Sending token refresh request to X");
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                throw new RuntimeException("X token refresh failed with status: " + response.getStatusCode());
+            }
+
+            Map<String, Object> responseBody = response.getBody();
+
+            // Extract tokens from response
+            String newAccessToken = (String) responseBody.get("access_token");
+            String newRefreshToken = (String) responseBody.get("refresh_token");
+            Integer expiresIn = (Integer) responseBody.get("expires_in");
+
+            if (newAccessToken == null) {
+                throw new RuntimeException("X response missing access_token");
+            }
+
+            OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC)
+                    .plusSeconds(expiresIn.longValue());
+            long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
+
+            // Update DB
+            authInfo.setAccessToken(newAccessToken);
+            authInfo.setExpiresAt(expiresAtMillis);
+            authInfo.setExpiresAtUtc(expiresAtUtc);
+
+            if (newRefreshToken != null) {
+                authInfo.getAdditionalInfo().setXRefreshToken(newRefreshToken);
+            }
+
+
+            // Save updated tokens to database
+            log.info("Successfully refreshed X access token");
+            return oAuthInfoRepo.save(authInfo);
+
+        } catch (HttpClientErrorException e) {
+            log.error("X Token Refresh Failed - Status: {}, Body: {}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
+
+            // Handle specific error cases
+            if (e.getStatusCode().value() == 400) {
+                String errorBody = e.getResponseBodyAsString();
+
+                // Check if refresh token is invalid/expired
+                if (errorBody.contains("invalid_request") || errorBody.contains("invalid_grant")) {
+                    log.error("Refresh token is invalid or expired for user: {}",
+                            authInfo.getProviderUserId());
+
+                    // Mark the OAuth connection as invalid so user needs to reconnect
+                    throw new RuntimeException("X refresh token expired. User needs to reconnect their X account.", e);
+                }
+            }
+
+            throw new RuntimeException("Failed to refresh X access token: " + e.getMessage(), e);
+        } catch (Exception e) {
+            log.error("Unexpected error refreshing X token: {}", e.getMessage(), e);
+            throw new RuntimeException("X token refresh failed", e);
         }
-
-        // Prepare form
-        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-        form.add("grant_type", "refresh_token");
-        form.add("refresh_token", refreshToken);
-        form.add("client_id", clientId);
-
-        // Create Basic auth header
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        String basic = Base64.getEncoder()
-                .encodeToString((clientId + ":" + clientSecret)
-                        .getBytes(StandardCharsets.UTF_8));
-
-        headers.set("Authorization", "Basic " + basic);
-
-        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
-
-        // Call X refresh endpoint
-        ResponseEntity<Map> resp = rest.postForEntity(
-                "https://api.twitter.com/2/oauth2/token",
-                entity,
-                Map.class
-        );
-
-        if (!resp.getStatusCode().is2xxSuccessful()) {
-            throw new RuntimeException("X token refresh failed: " + resp);
-        }
-
-        Map body = resp.getBody();
-        String newAccessToken = (String) body.get("access_token");
-        String newRefreshToken = (String) body.get("refresh_token");
-        Integer expiresIn = (Integer) body.get("expires_in");
-
-        // Compute expiry time
-        OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC)
-                .plusSeconds(expiresIn.longValue());
-        long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
-
-        // Update DB
-        info.setAccessToken(newAccessToken);
-        info.setExpiresAt(expiresAtMillis);
-        info.setExpiresAtUtc(expiresAtUtc);
-
-        if (newRefreshToken != null) {
-            info.getAdditionalInfo().setXRefreshToken(newRefreshToken);
-        }
-
-        return repo.save(info);
     }
+
+
+//    private OAuthInfoEntity refreshAccessTokenV0(OAuthInfoEntity info) {
+//
+//        String refreshToken = info.getAdditionalInfo().getXRefreshToken();
+//        if (refreshToken == null) {
+//            throw new RuntimeException("No X refresh token stored");
+//        }
+//
+//        // Prepare form
+//        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+//        form.add("grant_type", "refresh_token");
+//        form.add("refresh_token", refreshToken);
+//        form.add("client_id", clientId);
+//
+//        // Create Basic auth header
+//        HttpHeaders headers = new HttpHeaders();
+//        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+//
+//        String basic = Base64.getEncoder()
+//                .encodeToString((clientId + ":" + clientSecret)
+//                        .getBytes(StandardCharsets.UTF_8));
+//
+//        headers.set("Authorization", "Basic " + basic);
+//
+//        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
+//
+//        // Call X refresh endpoint
+//        ResponseEntity<Map> resp = rest.postForEntity(
+//                "https://api.twitter.com/2/oauth2/token",
+//                entity,
+//                Map.class
+//        );
+//
+//        if (!resp.getStatusCode().is2xxSuccessful()) {
+//            throw new RuntimeException("X token refresh failed: " + resp);
+//        }
+//
+//        Map body = resp.getBody();
+//        String newAccessToken = (String) body.get("access_token");
+//        String newRefreshToken = (String) body.get("refresh_token");
+//        Integer expiresIn = (Integer) body.get("expires_in");
+//
+//        // Compute expiry time
+//        OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC)
+//                .plusSeconds(expiresIn.longValue());
+//        long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
+//
+//        // Update DB
+//        info.setAccessToken(newAccessToken);
+//        info.setExpiresAt(expiresAtMillis);
+//        info.setExpiresAtUtc(expiresAtUtc);
+//
+//        if (newRefreshToken != null) {
+//            info.getAdditionalInfo().setXRefreshToken(newRefreshToken);
+//        }
+//
+//        return repo.save(info);
+//    }
 
 
 }

@@ -7,6 +7,7 @@ import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.service.provider.OAuthInfoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -29,14 +30,17 @@ public class ImagePostPublisherService {
     @Autowired
     private XImagePostPublisherService xImagePostPublisherService;
 
+    @Autowired
+    private OAuthInfoService oAuthInfoService;
+
 
     public void publishPost(PostEntity post) {
         try{
             String userId = post.getUserId();
             log.info("Publishing Image(s) post, title:{} for userId: {} ", post.getTitle(), userId);
             List<String> providerUserIds = post.getProviderUserIds();
-            List<OAuthInfoEntity> oauthInfos = oAuthInfoRepo.findByUserIdAndProviderUserIdIn(userId, providerUserIds);
 
+            List<OAuthInfoEntity> oauthInfos = oAuthInfoService.getOAuthInfos(userId, providerUserIds);
             List<PostMediaEntity> mediaFiles = post.getMediaFiles();
             for(var authInfo : oauthInfos){
                 if(Provider.LINKEDIN.equals(authInfo.getProvider())){
