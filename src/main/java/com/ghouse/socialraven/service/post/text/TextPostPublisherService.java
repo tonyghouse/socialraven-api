@@ -5,9 +5,11 @@ import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
 import com.ghouse.socialraven.entity.PostEntity;
+import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.repo.PostRepo;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
+import com.ghouse.socialraven.service.provider.OAuthInfoService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,34 +30,32 @@ import java.util.Map;
 public class TextPostPublisherService {
 
     @Autowired
-    private PostRepo postRepo;
+     private PostRepo postRepo;
 
     @Autowired
-    private RestTemplate rest;
+     private OAuthInfoService oAuthInfoService;
 
     @Autowired
-    private OAuthInfoRepo oAuthInfoRepo;
+    private LinkedinTextPostPublisherService linkedinTextPostPublisherService;
 
     @Autowired
-    private LinkedInOAuthService linkedInOAuthService;
-
-    @Autowired
-    private XOAuthService xOAuthService;
+    private XTextPostPublisherService xTextPostPublisherService;
 
 
     public void publishPost(PostEntity post) {
         try{
             String userId = post.getUserId();
-            log.info("Publishing Text post, title:{} for userId: {} ", post.getTitle(), userId);
+            log.info("Publishing Image(s) post, title:{} for userId: {} ", post.getTitle(), userId);
             List<String> providerUserIds = post.getProviderUserIds();
-            List<OAuthInfoEntity> oauthInfos = oAuthInfoRepo.findByUserIdAndProviderUserIdIn(userId, providerUserIds);
 
+            List<OAuthInfoEntity> oauthInfos = oAuthInfoService.getOAuthInfos(userId, providerUserIds);
+            List<PostMediaEntity> mediaFiles = post.getMediaFiles();
             for(var authInfo : oauthInfos){
                 if(Provider.LINKEDIN.equals(authInfo.getProvider())){
-                    postTextToLinkedin(post, authInfo);
+                    linkedinTextPostPublisherService.postTextToLinkedin(post, authInfo);
                 }
                 if(Provider.X.equals(authInfo.getProvider())){
-                    postTextToX(post, authInfo);
+                    xTextPostPublisherService.postTextToX(post, authInfo);
                 }
             }
 
@@ -66,97 +66,6 @@ public class TextPostPublisherService {
             throw new RuntimeException("Failed to Text Post: "+post.getId(), exp);
         }
 
-    }
-
-
-    public void postTextToLinkedin(PostEntity post, OAuthInfoEntity authInfo) {
-        try {
-            OAuthInfoEntity validOAuthInfo = xOAuthService.getValidOAuthInfo(authInfo);
-            String accessToken = validOAuthInfo.getAccessToken();
-
-            // LinkedIn user ID stored from OAuth callback
-            String personUrn = "urn:li:person:" + validOAuthInfo.getProviderUserId();
-
-            // Build request body payload
-            Map<String, Object> body = new HashMap<>();
-            body.put("author", personUrn);
-            body.put("lifecycleState", "PUBLISHED");
-
-            Map<String, Object> shareContent = Map.of(
-                    "shareCommentary", Map.of("text", post.getDescription()), // text content
-                    "shareMediaCategory", "NONE"
-            );
-
-            body.put("specificContent", Map.of(
-                    "com.linkedin.ugc.ShareContent", shareContent
-            ));
-
-            body.put("visibility", Map.of(
-                    "com.linkedin.ugc.MemberNetworkVisibility", "PUBLIC"
-            ));
-
-            ObjectMapper objectMapper = new ObjectMapper();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(accessToken);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("X-RestLi-Protocol-Version", "2.0.0"); // REQUIRED for LinkedIn
-
-            // prevent conflicting Transfer-Encoding
-            headers.setContentLength(objectMapper.writeValueAsBytes(body).length);
-
-            HttpEntity<String> entity = new HttpEntity<>(
-                    objectMapper.writeValueAsString(body), // send as raw string JSON
-                    headers
-            );
-
-            ResponseEntity<String> response = rest.exchange(
-                    "https://api.linkedin.com/v2/ugcPosts",
-                    HttpMethod.POST,
-                    entity,
-                    String.class
-            );
-
-
-            log.info("LinkedIn Post Success → {}", response.getBody());
-        } catch (Exception exp) {
-            log.error("LinkedIn Text Post Failed → {}", exp.getMessage(), exp);
-            throw new RuntimeException("LinkedIn Text Post Failed: "+post.getId(), exp);
-        }
-    }
-
-    public void postTextToX(PostEntity post, OAuthInfoEntity authInfo) {
-        try {
-            OAuthInfoEntity validOAuthInfo = xOAuthService.getValidOAuthInfo(authInfo);
-            String accessToken = validOAuthInfo.getAccessToken();
-
-            // Build tweet text (Title + Description)
-            StringBuilder tweetText = new StringBuilder();
-            if (post.getTitle() != null && !post.getTitle().isEmpty()) {
-                tweetText.append(post.getTitle()).append("\n\n");
-            }
-            tweetText.append(post.getDescription());
-
-            Map<String, String> payload = Map.of("text", tweetText.toString());
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(accessToken);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-
-            HttpEntity<Map<String, String>> request = new HttpEntity<>(payload, headers);
-
-            ResponseEntity<Map> response = rest.exchange(
-                    "https://api.twitter.com/2/tweets",
-                    HttpMethod.POST,
-                    request,
-                    Map.class
-            );
-
-            log.info("Tweet Posted Successfully → {}", response.getBody());
-        } catch (Exception exp) {
-            log.error("X Text Post Failed → {}", exp.getMessage(), exp);
-            throw new RuntimeException("X Text Post Failed: "+post.getId(), exp);
-        }
     }
 
 
