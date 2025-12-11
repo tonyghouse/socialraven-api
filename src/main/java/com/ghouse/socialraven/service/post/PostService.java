@@ -17,6 +17,7 @@ import com.ghouse.socialraven.service.profile.ProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -144,6 +145,7 @@ public class PostService {
         }
         List<PostMediaEntity> mediaList = post.getMediaFiles();
 
+
         List<MediaResponse> mediaDtos =
                 mediaList.stream().map(m ->
                         new MediaResponse(
@@ -151,7 +153,7 @@ public class PostService {
                                 m.getFileName(),
                                 m.getMimeType(),
                                 m.getSize(),
-                                storageService.generatePresignedGetUrl(m.getFileKey()),
+                                storageService.generatePresignedGetUrl(m.getFileKey(), Duration.ofMinutes(10)),
                                 m.getFileKey()
                         )
                 ).toList();

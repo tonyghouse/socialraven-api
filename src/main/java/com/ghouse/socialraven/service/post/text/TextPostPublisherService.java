@@ -1,4 +1,4 @@
-package com.ghouse.socialraven.service.post;
+package com.ghouse.socialraven.service.post.text;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.constant.PostStatus;

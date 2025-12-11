@@ -1,4 +1,4 @@
-package com.ghouse.socialraven.service.post;
+package com.ghouse.socialraven.service.post.video;
 
 import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.entity.PostEntity;

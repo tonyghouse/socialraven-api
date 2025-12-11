@@ -1,8 +1,8 @@
 package com.ghouse.socialraven.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -12,19 +12,13 @@ public class LinkedInUploadResponse {
     @Data
     public static class Value {
         private String asset;
-        
-        // FIXED: LinkedIn returns uploadMechanism as an OBJECT, not a List
-        private Map<String, MediaUploadInfo> uploadMechanism;
+
+        // ✅ THIS IS THE REAL FIELD NOW
+        private List<UploadInstruction> uploadInstructions;
     }
 
     @Data
-    public static class MediaUploadInfo {
-        @JsonProperty("com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest")
-        private MediaUploadHttpRequest mediaUploadHttpRequest;
-    }
-
-    @Data
-    public static class MediaUploadHttpRequest {
+    public static class UploadInstruction {
         private String uploadUrl;
         private Map<String, String> headers;
     }
