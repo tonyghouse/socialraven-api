@@ -4,6 +4,7 @@ package com.ghouse.socialraven.service.provider;
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
@@ -46,6 +47,9 @@ public class XOAuthService {
 
     @Autowired
     private OAuthInfoRepo oAuthInfoRepo;
+
+    @Autowired
+    private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void handleCallback(XOAuthCallbackRequest req) {
 
@@ -134,6 +138,7 @@ public class XOAuthService {
         }
 
         oAuthInfoRepo.save(info);
+        redisTokenExpirySaver.saveTokenExpiry(info);
     }
 
 
@@ -160,9 +165,7 @@ public class XOAuthService {
     }
 
 
-    // X OAuth 2.0 Token Refresh - Correct Implementation
-
-    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity authInfo) {
+    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity authInfo) {
         String url = "https://api.twitter.com/2/oauth2/token";
 
         try {
@@ -245,64 +248,6 @@ public class XOAuthService {
         }
     }
 
-
-//    private OAuthInfoEntity refreshAccessTokenV0(OAuthInfoEntity info) {
-//
-//        String refreshToken = info.getAdditionalInfo().getXRefreshToken();
-//        if (refreshToken == null) {
-//            throw new RuntimeException("No X refresh token stored");
-//        }
-//
-//        // Prepare form
-//        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-//        form.add("grant_type", "refresh_token");
-//        form.add("refresh_token", refreshToken);
-//        form.add("client_id", clientId);
-//
-//        // Create Basic auth header
-//        HttpHeaders headers = new HttpHeaders();
-//        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-//
-//        String basic = Base64.getEncoder()
-//                .encodeToString((clientId + ":" + clientSecret)
-//                        .getBytes(StandardCharsets.UTF_8));
-//
-//        headers.set("Authorization", "Basic " + basic);
-//
-//        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(form, headers);
-//
-//        // Call X refresh endpoint
-//        ResponseEntity<Map> resp = rest.postForEntity(
-//                "https://api.twitter.com/2/oauth2/token",
-//                entity,
-//                Map.class
-//        );
-//
-//        if (!resp.getStatusCode().is2xxSuccessful()) {
-//            throw new RuntimeException("X token refresh failed: " + resp);
-//        }
-//
-//        Map body = resp.getBody();
-//        String newAccessToken = (String) body.get("access_token");
-//        String newRefreshToken = (String) body.get("refresh_token");
-//        Integer expiresIn = (Integer) body.get("expires_in");
-//
-//        // Compute expiry time
-//        OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC)
-//                .plusSeconds(expiresIn.longValue());
-//        long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
-//
-//        // Update DB
-//        info.setAccessToken(newAccessToken);
-//        info.setExpiresAt(expiresAtMillis);
-//        info.setExpiresAtUtc(expiresAtUtc);
-//
-//        if (newRefreshToken != null) {
-//            info.getAdditionalInfo().setXRefreshToken(newRefreshToken);
-//        }
-//
-//        return repo.save(info);
-//    }
 
 
 }

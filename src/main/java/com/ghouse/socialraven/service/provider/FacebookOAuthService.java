@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.provider;
 
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.TimeUtil;
@@ -34,6 +35,9 @@ public class FacebookOAuthService {
 
     @Autowired
     private RestTemplate rest;
+
+    @Autowired
+    private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void handleCallback(String code, String userId) {
         log.info("Starting Facebook OAuth callback for userId: {}", userId);
@@ -101,6 +105,7 @@ public class FacebookOAuthService {
 //                oauthInfoEntity.setId(existingAuthInfo.getId());
 //            }
             repo.save(oAuthInfo);
+            redisTokenExpirySaver.saveTokenExpiry(oAuthInfo);
 
             log.info("Facebook OAuth successfully completed for user: {}, Facebook ID: {}", userId, fbUserId);
 

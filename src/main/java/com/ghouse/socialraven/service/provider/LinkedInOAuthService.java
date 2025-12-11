@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.provider;
 
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
@@ -37,6 +38,9 @@ public class LinkedInOAuthService {
 
     @Autowired
     private OAuthInfoRepo repo;
+
+    @Autowired
+    private RedisTokenExpirySaver redisTokenExpirySaver;
 
     private static final String TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 
@@ -104,6 +108,7 @@ public class LinkedInOAuthService {
         }
         // Persist
         repo.save(oauthInfoEntity);
+        redisTokenExpirySaver.saveTokenExpiry(oauthInfoEntity);
     }
 
     // Fetch LinkedIn OIDC User Info
@@ -133,12 +138,15 @@ public class LinkedInOAuthService {
             return info;
         }
 
-        //TODO-Implement refresh token from the linkedin accessToken (long lived accessToken of 60 days)
+
         // 2. Expired → refresh
-        return info;
-        //return refreshAccessToken(info);
+        return refreshAccessToken(info);
     }
 
+    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+        //TODO-Implement refresh token from the linkedin accessToken (long lived accessToken of 60 days)
+        return info;
+    }
 
 
 }

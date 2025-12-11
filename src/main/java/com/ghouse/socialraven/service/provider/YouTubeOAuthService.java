@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.provider;
 
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
@@ -32,6 +33,9 @@ public class YouTubeOAuthService {
 
     @Autowired
     private OAuthInfoRepo repo;
+
+    @Autowired
+    private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void exchangeCodeForTokens(String code) {
         RestTemplate rest = new RestTemplate();
@@ -78,6 +82,7 @@ public class YouTubeOAuthService {
 
 
         repo.save(oauthInfoEntity);
+        redisTokenExpirySaver.saveTokenExpiry(oauthInfoEntity);
     }
 
     // =====================
@@ -120,7 +125,7 @@ public class YouTubeOAuthService {
         return refreshAccessToken(info);
     }
 
-    private OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
 
         String refreshToken = info.getAdditionalInfo().getYoutubeRefreshToken();
         if (refreshToken == null) {
