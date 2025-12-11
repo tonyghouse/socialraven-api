@@ -13,7 +13,7 @@ import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.PostMediaRepo;
 import com.ghouse.socialraven.repo.PostRepo;
-import com.ghouse.socialraven.service.profile.ProfileService;
+import com.ghouse.socialraven.service.profile.AccountProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
@@ -52,7 +52,7 @@ public class PostService {
     private StorageService storageService;
 
     @Autowired
-    private ProfileService profileService;
+    private AccountProfileService accountProfileService;
 
     @Autowired
     private JedisPool jedisPool;
@@ -122,7 +122,7 @@ public class PostService {
         }
 
 
-        List<ConnectedAccount> connectedAccounts = profileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
 
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
@@ -171,7 +171,7 @@ public class PostService {
 
     public Page<PostResponse> getUserPosts(String userId) {
         Pageable pageable = Pageable.unpaged();
-        List<ConnectedAccount> connectedAccounts = profileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
 
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));

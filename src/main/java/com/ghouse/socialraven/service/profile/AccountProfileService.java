@@ -4,13 +4,13 @@ import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.helper.AllowedPostTypeFetcher;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
@@ -25,7 +25,7 @@ import redis.clients.jedis.JedisPool;
 
 @Service
 @Slf4j
-public class ProfileService {
+public class AccountProfileService {
 
     @Autowired
     private OAuthInfoRepo repo;
@@ -113,6 +113,11 @@ public class ProfileService {
                 connectedAccounts.add(connected);
             }
         }
+
+        //map allowed post types:
+        connectedAccounts.forEach(a->{
+            a.setAllowedFormats(AllowedPostTypeFetcher.getAllowedPostTypes(a.getPlatform()));
+        });
 
         return connectedAccounts;
     }

@@ -2,14 +2,12 @@ package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.dto.ConnectedAccount;
-import com.ghouse.socialraven.service.profile.ProfileService;
+import com.ghouse.socialraven.service.profile.AccountProfileService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AccountProfileController {
 
     @Autowired
-    private  ProfileService profileService;
+    private AccountProfileService accountProfileService;
 
     @GetMapping("/connected")
     public List<ConnectedAccount> getConnectedAccounts(
@@ -33,9 +31,9 @@ public class AccountProfileController {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         List<ConnectedAccount> connectedAccounts = new ArrayList<>();
         if (platform == null) {
-            connectedAccounts = profileService.getAllConnectedAccounts(userId);
+            connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         } else {
-            connectedAccounts = profileService.getConnectedAccounts(userId, platform);
+            connectedAccounts = accountProfileService.getConnectedAccounts(userId, platform);
         }
 
 //        List<ConnectedAccount> duplicates = new ArrayList<>();
@@ -56,7 +54,7 @@ public class AccountProfileController {
     @GetMapping("/connected/all")
     public List<ConnectedAccount> getAllConnectedAccounts() {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        List<ConnectedAccount> connectedAccounts = profileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         return connectedAccounts;
     }
 

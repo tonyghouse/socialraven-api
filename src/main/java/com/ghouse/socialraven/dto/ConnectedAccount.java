@@ -3,7 +3,11 @@ package com.ghouse.socialraven.dto;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.constant.Platform;
+import com.ghouse.socialraven.constant.PostType;
 import lombok.Data;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 public class ConnectedAccount {
@@ -12,6 +16,7 @@ public class ConnectedAccount {
     private Platform platform;
     private String username;
     private String profilePicLink;
+    private List<PostType> allowedFormats = new ArrayList<>();
 
     public static ConnectedAccount fromJson(String redisValue) {
         if (redisValue == null || redisValue.isBlank()) {
