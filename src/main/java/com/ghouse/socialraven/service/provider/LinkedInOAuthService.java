@@ -143,9 +143,11 @@ public class LinkedInOAuthService {
         return refreshAccessToken(info);
     }
 
-    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity oAuthInfo) {
         //TODO-Implement refresh token from the linkedin accessToken (long lived accessToken of 60 days)
-        return info;
+
+        redisTokenExpirySaver.saveTokenExpiry(oAuthInfo);
+        return oAuthInfo;
     }
 
 

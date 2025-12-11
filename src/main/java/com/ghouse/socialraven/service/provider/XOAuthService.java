@@ -221,7 +221,9 @@ public class XOAuthService {
 
             // Save updated tokens to database
             log.info("Successfully refreshed X access token");
-            return oAuthInfoRepo.save(authInfo);
+            OAuthInfoEntity updatedOAuthInfo = oAuthInfoRepo.save(authInfo);
+            redisTokenExpirySaver.saveTokenExpiry(updatedOAuthInfo);
+            return updatedOAuthInfo;
 
         } catch (HttpClientErrorException e) {
             log.error("X Token Refresh Failed - Status: {}, Body: {}",

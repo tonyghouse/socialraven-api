@@ -167,7 +167,9 @@ public class YouTubeOAuthService {
             info.getAdditionalInfo().setYoutubeRefreshToken((String) body.get("refresh_token"));
         }
 
-        return repo.save(info);
+        OAuthInfoEntity updatedOAuthInfo = repo.save(info);
+        redisTokenExpirySaver.saveTokenExpiry(updatedOAuthInfo);
+        return updatedOAuthInfo;
     }
 
 
