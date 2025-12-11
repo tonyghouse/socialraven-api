@@ -49,9 +49,6 @@ public class OAuthRefreshScheduler {
                     .map(Long::parseLong)
                     .collect(Collectors.toList());
 
-            // Prevent requeue → remove from pool after picking
-            jedis.zrem(redisKey, ouathInfoFromRedis.toArray(new String[0]));
-
             oAuthInfoRefreshService.refreshOAuthInfos(oauthInfoIds);
 
             log.info("[OAuthRefreshScheduler] Picked & queued overdue + upcoming refresh token: {}", oauthInfoIds);
