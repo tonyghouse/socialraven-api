@@ -2,7 +2,7 @@ package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.dto.ConnectedAccount;
-import com.ghouse.socialraven.service.profile.AccountProfileService;
+import com.ghouse.socialraven.service.account_profile.AccountProfileService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 
 import java.util.ArrayList;

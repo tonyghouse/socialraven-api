@@ -1,4 +1,4 @@
-package com.ghouse.socialraven.service.profile;
+package com.ghouse.socialraven.service.account_profile;
 
 import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.constant.Provider;

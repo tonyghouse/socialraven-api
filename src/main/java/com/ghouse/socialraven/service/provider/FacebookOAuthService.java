@@ -96,6 +96,10 @@ public class FacebookOAuthService {
 //            }
 
             oAuthInfo.setAdditionalInfo(additional);
+
+//            if (existingAuthInfo != null) {
+//                oauthInfoEntity.setId(existingAuthInfo.getId());
+//            }
             repo.save(oAuthInfo);
 
             log.info("Facebook OAuth successfully completed for user: {}, Facebook ID: {}", userId, fbUserId);

@@ -13,7 +13,7 @@ import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.PostMediaRepo;
 import com.ghouse.socialraven.repo.PostRepo;
-import com.ghouse.socialraven.service.profile.AccountProfileService;
+import com.ghouse.socialraven.service.account_profile.AccountProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 

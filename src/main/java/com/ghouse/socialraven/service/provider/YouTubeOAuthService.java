@@ -73,7 +73,7 @@ public class YouTubeOAuthService {
 
         OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.YOUTUBE, oauthInfoEntity.getProviderUserId());
         if (existingAuthInfo != null) {
-            throw new RuntimeException("Youtube OAuth already exist");
+            oauthInfoEntity.setId(existingAuthInfo.getId());
         }
 
 

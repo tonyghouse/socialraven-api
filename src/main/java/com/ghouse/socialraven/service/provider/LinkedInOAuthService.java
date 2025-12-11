@@ -99,8 +99,8 @@ public class LinkedInOAuthService {
         oauthInfoEntity.setAdditionalInfo(additional);
 
         OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.LINKEDIN, linkedInUserId);
-        if(existingAuthInfo!=null){
-            throw new RuntimeException("LinkedIn OAuth already exist");
+        if (existingAuthInfo != null) {
+            oauthInfoEntity.setId(existingAuthInfo.getId());
         }
         // Persist
         repo.save(oauthInfoEntity);

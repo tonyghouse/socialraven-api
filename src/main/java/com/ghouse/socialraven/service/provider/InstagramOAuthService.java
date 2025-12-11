@@ -96,7 +96,9 @@ public class InstagramOAuthService {
 //
 //            AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
 //            oAuthInfo.setAdditionalInfo(additional);
-//            repo.save(oAuthInfo);
+//            if (existingAuthInfo != null) {
+//                oauthInfoEntity.setId(existingAuthInfo.getId());
+//            }//            repo.save(oAuthInfo);
 //            log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", userId, instagramUserId);
 
         } catch (Exception e) {

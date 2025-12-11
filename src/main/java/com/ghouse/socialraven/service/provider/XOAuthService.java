@@ -130,7 +130,7 @@ public class XOAuthService {
 
         OAuthInfoEntity existingAuthInfo = oAuthInfoRepo.findByUserIdAndProviderAndProviderUserId(userId, Provider.X, info.getProviderUserId());
         if (existingAuthInfo != null) {
-            throw new RuntimeException("X OAuth already exist");
+            info.setId(existingAuthInfo.getId());
         }
 
         oAuthInfoRepo.save(info);
