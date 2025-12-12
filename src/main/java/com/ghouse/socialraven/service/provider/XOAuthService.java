@@ -51,6 +51,10 @@ public class XOAuthService {
     @Autowired
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
+    // X API base URLs (using x.com, not twitter.com)
+    private static final String X_TOKEN_URL = "https://api.x.com/2/oauth2/token";
+    private static final String X_USER_ME_URL = "https://api.x.com/2/users/me?user.fields=profile_image_url,name";
+
     public void handleCallback(XOAuthCallbackRequest req) {
 
         log.info("X OAuth with clientId:{} and CallBackUrl: {}", clientId, callbackUri);
@@ -76,7 +80,7 @@ public class XOAuthService {
                 new HttpEntity<>(form, headers);
 
         ResponseEntity<Map> tokenResp = restTemplate.postForEntity(
-                "https://api.twitter.com/2/oauth2/token",
+                X_TOKEN_URL,  // Updated to use x.com
                 entity,
                 Map.class
         );
@@ -102,7 +106,7 @@ public class XOAuthService {
         HttpEntity<Void> profileEntity = new HttpEntity<>(profileHeaders);
 
         ResponseEntity<Map> profileResp = restTemplate.exchange(
-                "https://api.twitter.com/2/users/me?user.fields=profile_image_url,name",
+                X_USER_ME_URL,  // Updated to use x.com
                 HttpMethod.GET,
                 profileEntity,
                 Map.class
@@ -166,8 +170,6 @@ public class XOAuthService {
 
 
     public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity authInfo) {
-        String url = "https://api.twitter.com/2/oauth2/token";
-
         try {
             log.info("Refreshing X access token for user: {}", authInfo.getProviderUserId());
 
@@ -188,7 +190,7 @@ public class XOAuthService {
             HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
 
             log.debug("Sending token refresh request to X");
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+            ResponseEntity<Map> response = restTemplate.postForEntity(X_TOKEN_URL, request, Map.class);  // Updated to use x.com
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
                 throw new RuntimeException("X token refresh failed with status: " + response.getStatusCode());
@@ -217,7 +219,6 @@ public class XOAuthService {
             if (newRefreshToken != null) {
                 authInfo.getAdditionalInfo().setXRefreshToken(newRefreshToken);
             }
-
 
             // Save updated tokens to database
             log.info("Successfully refreshed X access token");
@@ -249,7 +250,4 @@ public class XOAuthService {
             throw new RuntimeException("X token refresh failed", e);
         }
     }
-
-
-
 }

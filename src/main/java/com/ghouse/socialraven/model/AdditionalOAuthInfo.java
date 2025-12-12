@@ -10,6 +10,7 @@ public class AdditionalOAuthInfo {
 
     private String xRefreshToken;
 
+
     private String youtubeRefreshToken;
 
     private String facebookPageId;
