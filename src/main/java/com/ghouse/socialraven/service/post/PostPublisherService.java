@@ -29,6 +29,16 @@ public class PostPublisherService {
     @Autowired
     private TextPostPublisherService textPostPublisherService;
 
+
+    public void publishPost(Long postId) {
+        log.info("Publishing post: {}", postId);
+        PostEntity post = postRepo.findByIdWithMedia(postId);
+        if (post != null) {
+            publishPost(post);
+        }
+
+    }
+
     public void publishPosts(List<Long> postIds) {
         for (Long postId : postIds) {
             log.info("Publishing post: {}", postId);
