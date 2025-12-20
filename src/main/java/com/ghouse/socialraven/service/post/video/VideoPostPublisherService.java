@@ -35,6 +35,9 @@ public class VideoPostPublisherService {
     private XVideoPostPublisherService xVideoPostPublisherService;
 
     @Autowired
+    private YoutubeVideoPostPublisherService youtubeVideoPostPublisherService;
+
+    @Autowired
     private OAuthInfoService oAuthInfoService;
 
 
@@ -52,6 +55,9 @@ public class VideoPostPublisherService {
                 }
                 if(Provider.X.equals(authInfo.getProvider())){
                     xVideoPostPublisherService.postVideosToX(post,mediaFiles, authInfo);
+                }
+                if(Provider.YOUTUBE.equals(authInfo.getProvider())){
+                    youtubeVideoPostPublisherService.postVideoToYoutube(post,mediaFiles, authInfo);
                 }
             }
 

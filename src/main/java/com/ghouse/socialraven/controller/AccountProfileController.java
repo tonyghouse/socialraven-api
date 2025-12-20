@@ -10,7 +10,9 @@ import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -56,6 +58,13 @@ public class AccountProfileController {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         return connectedAccounts;
+    }
+
+    @GetMapping("/connected/delete/{providerUserId}")
+    public String deleteConnectedAccount(@PathVariable String providerUserId) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        accountProfileService.deleteConnectedAccount(userId, providerUserId);
+        return "SUCCESS";
     }
 
 

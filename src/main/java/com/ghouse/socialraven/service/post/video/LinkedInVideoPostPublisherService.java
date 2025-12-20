@@ -22,6 +22,9 @@ public class LinkedInVideoPostPublisherService {
     @Autowired
     private RestTemplate restTemplate;
 
+    // Create a clean RestTemplate without any interceptors for pre-signed URL uploads
+    private final RestTemplate cleanRestTemplate = new RestTemplate();
+
     @Autowired
     private LinkedInOAuthService linkedInOAuthService;
 
@@ -35,7 +38,7 @@ public class LinkedInVideoPostPublisherService {
     private static final String VIDEO_INIT_URL = "https://api.linkedin.com/rest/videos?action=initializeUpload";
     private static final String VIDEO_STATUS_URL = "https://api.linkedin.com/rest/videos/";
     private static final String POST_CREATE_URL = "https://api.linkedin.com/rest/posts";
-    
+
     // LinkedIn video limits
     private static final long MAX_VIDEO_SIZE = 5L * 1024 * 1024 * 1024; // 5GB
     private static final long MIN_VIDEO_SIZE = 75 * 1024; // 75KB
@@ -117,12 +120,12 @@ public class LinkedInVideoPostPublisherService {
 
             // Build request body
             Map<String, Object> body = Map.of(
-                "initializeUploadRequest", Map.of(
-                    "owner", "urn:li:person:" + linkedInUserId,
-                    "fileSizeBytes", fileSizeBytes,
-                    "uploadCaptions", false,
-                    "uploadThumbnail", false
-                )
+                    "initializeUploadRequest", Map.of(
+                            "owner", "urn:li:person:" + linkedInUserId,
+                            "fileSizeBytes", fileSizeBytes,
+                            "uploadCaptions", false,
+                            "uploadThumbnail", false
+                    )
             );
 
             HttpHeaders headers = new HttpHeaders();
@@ -135,10 +138,10 @@ public class LinkedInVideoPostPublisherService {
 
             log.debug("Initializing video upload for {} bytes", fileSizeBytes);
             ResponseEntity<Map> response = restTemplate.exchange(
-                url,
-                HttpMethod.POST,
-                request,
-                Map.class
+                    url,
+                    HttpMethod.POST,
+                    request,
+                    Map.class
             );
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
@@ -146,27 +149,65 @@ public class LinkedInVideoPostPublisherService {
             }
 
             Map<String, Object> responseBody = response.getBody();
-            Map<String, Object> value = (Map<String, Object>) responseBody.get("value");
 
-            if (value == null) {
-                throw new RuntimeException("No 'value' in response");
+            // Log the full response for debugging
+            log.info("LinkedIn video init response: {}", responseBody);
+
+            // Try different possible response structures
+            String videoUrn = null;
+            String uploadUrl = null;
+
+            // Structure 1: value.video and value.uploadUrl
+            if (responseBody.containsKey("value")) {
+                Map<String, Object> value = (Map<String, Object>) responseBody.get("value");
+                if (value != null) {
+                    videoUrn = (String) value.get("video");
+                    uploadUrl = (String) value.get("uploadUrl");
+                }
             }
 
-            String videoUrn = (String) value.get("video");
-            String uploadUrl = (String) value.get("uploadUrl");
-
-            if (videoUrn == null || uploadUrl == null) {
-                throw new RuntimeException("Missing video URN or upload URL in response");
+            // Structure 2: Direct keys
+            if (videoUrn == null && responseBody.containsKey("video")) {
+                videoUrn = (String) responseBody.get("video");
+            }
+            if (uploadUrl == null && responseBody.containsKey("uploadUrl")) {
+                uploadUrl = (String) responseBody.get("uploadUrl");
             }
 
-            // Store upload URL temporarily (we'll use it in next step)
-            // For simplicity, we'll pass it through the videoUrn return value
-            // In production, you might want to store this in a cache/redis
-            log.debug("Got upload URL: {}", uploadUrl);
-            
-            // Store upload URL in a class variable or return both
-            // For now, we'll call upload immediately, so we pass uploadUrl via another call
-            uploadUrlCache.put(videoUrn, uploadUrl);
+            // Structure 3: uploadInstructions array
+            List<Map<String, Object>> uploadInstructions = null;
+            if (responseBody.containsKey("uploadInstructions")) {
+                uploadInstructions = (List<Map<String, Object>>) responseBody.get("uploadInstructions");
+            }
+
+            // Structure 4: Check if value has uploadInstructions
+            if (uploadInstructions == null && responseBody.containsKey("value")) {
+                Map<String, Object> value = (Map<String, Object>) responseBody.get("value");
+                if (value != null && value.containsKey("uploadInstructions")) {
+                    uploadInstructions = (List<Map<String, Object>>) value.get("uploadInstructions");
+                }
+            }
+
+            // For backward compatibility, if we have a single uploadUrl, create instructions
+            if (uploadInstructions == null && uploadUrl != null) {
+                uploadInstructions = List.of(
+                        Map.of(
+                                "uploadUrl", uploadUrl,
+                                "firstByte", 0,
+                                "lastByte", (int) fileSizeBytes - 1
+                        )
+                );
+            }
+
+            if (videoUrn == null || uploadInstructions == null || uploadInstructions.isEmpty()) {
+                log.error("Could not extract video URN or upload instructions from response: {}", responseBody);
+                throw new RuntimeException("Missing video URN or upload instructions in response. Response keys: " + responseBody.keySet());
+            }
+
+            log.info("Successfully extracted - VideoURN: {}, Upload chunks: {}", videoUrn, uploadInstructions.size());
+
+            // Store upload instructions temporarily
+            uploadInstructionsCache.put(videoUrn, uploadInstructions);
 
             return videoUrn;
 
@@ -181,45 +222,49 @@ public class LinkedInVideoPostPublisherService {
         }
     }
 
-    // Simple cache for upload URLs (in production, use Redis)
-    private final Map<String, String> uploadUrlCache = new java.util.concurrent.ConcurrentHashMap<>();
+    // Cache for upload instructions (in production, use Redis)
+    private final Map<String, List<Map<String, Object>>> uploadInstructionsCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * STEP 2: Upload video bytes to LinkedIn
-     * Uses the upload URL from initialization
+     * STEP 3: Wait for video processing
+     * LinkedIn uses CHUNKED upload for videos > 4MB
      */
     private void uploadVideoToLinkedIn(byte[] videoBytes, String videoUrn, String accessToken) {
         try {
-            String uploadUrl = uploadUrlCache.get(videoUrn);
-            if (uploadUrl == null) {
-                throw new RuntimeException("Upload URL not found for videoUrn: " + videoUrn);
+            // Get upload instructions from cache
+            List<Map<String, Object>> uploadInstructions = uploadInstructionsCache.get(videoUrn);
+
+            if (uploadInstructions == null || uploadInstructions.isEmpty()) {
+                throw new RuntimeException("Upload instructions not found for videoUrn: " + videoUrn);
             }
 
-            log.info("Uploading {} bytes to LinkedIn...", videoBytes.length);
+            log.info("Uploading {} bytes to LinkedIn in {} chunks...", videoBytes.length, uploadInstructions.size());
 
-            // Upload video bytes
-            HttpHeaders headers = new HttpHeaders();
-            // IMPORTANT: No Authorization header for the upload URL
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentLength(videoBytes.length);
+            // Upload each chunk
+            for (int i = 0; i < uploadInstructions.size(); i++) {
+                Map<String, Object> instruction = uploadInstructions.get(i);
+                String uploadUrl = (String) instruction.get("uploadUrl");
 
-            HttpEntity<byte[]> request = new HttpEntity<>(videoBytes, headers);
+                // Get byte range for this chunk
+                int firstByte = ((Number) instruction.get("firstByte")).intValue();
+                int lastByte = ((Number) instruction.get("lastByte")).intValue();
 
-            ResponseEntity<String> response = restTemplate.exchange(
-                uploadUrl,
-                HttpMethod.PUT,
-                request,
-                String.class
-            );
+                // Extract chunk
+                int chunkSize = lastByte - firstByte + 1;
+                byte[] chunk = new byte[chunkSize];
+                System.arraycopy(videoBytes, firstByte, chunk, 0, chunkSize);
 
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new RuntimeException("Video upload failed with status: " + response.getStatusCode());
+                log.info("Uploading chunk {}/{}: bytes {}-{} ({} bytes)",
+                        i + 1, uploadInstructions.size(), firstByte, lastByte, chunkSize);
+
+                // Upload chunk
+                uploadChunk(chunk, uploadUrl, i + 1, uploadInstructions.size());
             }
 
-            log.info("Video uploaded successfully to LinkedIn");
+            log.info("All chunks uploaded successfully to LinkedIn");
 
             // Clean up cache
-            uploadUrlCache.remove(videoUrn);
+            uploadInstructionsCache.remove(videoUrn);
 
         } catch (org.springframework.web.client.HttpClientErrorException e) {
             log.error("LinkedIn Video Upload Error - Status: {}, Body: {}",
@@ -231,6 +276,47 @@ public class LinkedInVideoPostPublisherService {
             throw new RuntimeException("Video upload to LinkedIn failed", e);
         }
     }
+
+    /**
+     * Upload a single chunk to LinkedIn
+     * IMPORTANT: LinkedIn upload URLs are pre-signed and DON'T need ANY authentication
+     * Use cleanRestTemplate without interceptors
+     */
+    private void uploadChunk(byte[] chunk, String uploadUrl, int chunkNumber, int totalChunks) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            // CRITICAL: Only these two headers, NO Authorization!
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setContentLength(chunk.length);
+
+            HttpEntity<byte[]> request = new HttpEntity<>(chunk, headers);
+
+            log.debug("Uploading chunk {}/{} ({} bytes) to pre-signed URL", chunkNumber, totalChunks, chunk.length);
+
+            // Use cleanRestTemplate to avoid any default headers/interceptors
+            ResponseEntity<String> response = cleanRestTemplate.exchange(
+                    uploadUrl,
+                    HttpMethod.PUT,
+                    request,
+                    String.class
+            );
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("Chunk upload failed with status: " + response.getStatusCode());
+            }
+
+            log.debug("Chunk {}/{} uploaded successfully", chunkNumber, totalChunks);
+
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            log.error("Failed to upload chunk {}/{} - Status: {}, Body: {}",
+                    chunkNumber, totalChunks, e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("Chunk upload failed: " + e.getStatusCode(), e);
+        } catch (Exception e) {
+            log.error("Failed to upload chunk {}/{}: {}", chunkNumber, totalChunks, e.getMessage(), e);
+            throw new RuntimeException("Chunk upload failed", e);
+        }
+    }
+
 
     /**
      * STEP 3: Wait for video processing
@@ -289,10 +375,10 @@ public class LinkedInVideoPostPublisherService {
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
             ResponseEntity<Map> response = restTemplate.exchange(
-                url,
-                HttpMethod.GET,
-                request,
-                Map.class
+                    url,
+                    HttpMethod.GET,
+                    request,
+                    Map.class
             );
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
@@ -329,9 +415,9 @@ public class LinkedInVideoPostPublisherService {
      * STEP 4: Create LinkedIn post with video
      */
     private void createPostWithVideo(PostEntity post,
-                                    String videoUrn,
-                                    String accessToken,
-                                    String linkedInUserId) {
+                                     String videoUrn,
+                                     String accessToken,
+                                     String linkedInUserId) {
         try {
             log.info("Creating LinkedIn post with video");
 
@@ -339,22 +425,22 @@ public class LinkedInVideoPostPublisherService {
 
             // Build post request body
             Map<String, Object> body = Map.of(
-                "author", "urn:li:person:" + linkedInUserId,
-                "commentary", postText,
-                "visibility", "PUBLIC",
-                "distribution", Map.of(
-                    "feedDistribution", "MAIN_FEED",
-                    "targetEntities", List.of(),
-                    "thirdPartyDistributionChannels", List.of()
-                ),
-                "content", Map.of(
-                    "media", Map.of(
-                        "title", post.getTitle() != null ? post.getTitle() : "",
-                        "id", videoUrn  // Use video URN
-                    )
-                ),
-                "lifecycleState", "PUBLISHED",
-                "isReshareDisabledByAuthor", false
+                    "author", "urn:li:person:" + linkedInUserId,
+                    "commentary", postText,
+                    "visibility", "PUBLIC",
+                    "distribution", Map.of(
+                            "feedDistribution", "MAIN_FEED",
+                            "targetEntities", List.of(),
+                            "thirdPartyDistributionChannels", List.of()
+                    ),
+                    "content", Map.of(
+                            "media", Map.of(
+                                    "title", post.getTitle() != null ? post.getTitle() : "",
+                                    "id", videoUrn  // Use video URN
+                            )
+                    ),
+                    "lifecycleState", "PUBLISHED",
+                    "isReshareDisabledByAuthor", false
             );
 
             HttpHeaders headers = new HttpHeaders();
@@ -367,10 +453,10 @@ public class LinkedInVideoPostPublisherService {
 
             log.debug("Sending post creation request to LinkedIn");
             ResponseEntity<String> response = restTemplate.exchange(
-                POST_CREATE_URL,
-                HttpMethod.POST,
-                entity,
-                String.class
+                    POST_CREATE_URL,
+                    HttpMethod.POST,
+                    entity,
+                    String.class
             );
 
             if (!response.getStatusCode().is2xxSuccessful()) {

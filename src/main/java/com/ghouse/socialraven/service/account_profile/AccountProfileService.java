@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.ghouse.socialraven.repo.PostRepo;
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -28,7 +29,7 @@ import redis.clients.jedis.JedisPool;
 public class AccountProfileService {
 
     @Autowired
-    private OAuthInfoRepo repo;
+    private OAuthInfoRepo oauthInfoRepo;
 
     @Autowired
     private LinkedInProfileService linkedInProfileService;
@@ -58,9 +59,13 @@ public class AccountProfileService {
     private Environment environment;
 
 
+    @Autowired
+    private PostRepo postRepo;
+
+
     public List<ConnectedAccount> getConnectedAccounts(String userId, @Nonnull Platform platform) {
         Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
-        List<OAuthInfoEntity> authInfos = repo.findAllByUserIdAndProvider(userId, provider);
+        List<OAuthInfoEntity> authInfos = oauthInfoRepo.findAllByUserIdAndProvider(userId, provider);
         return getConnectedAccounts(userId, authInfos);
     }
 
@@ -141,7 +146,7 @@ public class AccountProfileService {
 
 
     public List<ConnectedAccount> getAllConnectedAccounts(String userId) {
-        List<OAuthInfoEntity> authInfos =  authInfos = repo.findAllByUserId(userId);
+        List<OAuthInfoEntity> authInfos =  authInfos = oauthInfoRepo.findAllByUserId(userId);
         return getConnectedAccounts(userId, authInfos);
     }
 
@@ -168,4 +173,13 @@ public class AccountProfileService {
     }
 
 
+    public void deleteConnectedAccount(String userId, String providerUserId) {
+        OAuthInfoEntity oauthInfo = oauthInfoRepo.findByUserIdAndProviderUserId(userId, providerUserId);
+        if(oauthInfo == null){
+            throw new RuntimeException("Account info not found");
+        }
+
+
+        oauthInfoRepo.delete(oauthInfo);
+    }
 }
