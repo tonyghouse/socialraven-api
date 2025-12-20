@@ -30,6 +30,14 @@ public class AllowedPostTypeFetcher {
             return List.of(PostType.TEXT, PostType.IMAGE,PostType.VIDEO);
         }
 
+        if(Platform.tiktok.equals(platform)){
+            return List.of(PostType.VIDEO);
+        }
+
+        if(Platform.threads.equals(platform)){
+            return List.of(PostType.TEXT, PostType.IMAGE,PostType.VIDEO);
+        }
+
 
 
         return Collections.emptyList();

@@ -5,5 +5,7 @@ public enum Provider {
     X,
     LINKEDIN,
     FACEBOOK,
-    YOUTUBE
+    YOUTUBE,
+    TIKTOK,
+    THREADS
 }

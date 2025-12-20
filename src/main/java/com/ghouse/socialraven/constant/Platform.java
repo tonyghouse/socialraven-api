@@ -5,5 +5,7 @@ public enum Platform {
     x,
     linkedin,
     facebook,
-    youtube
+    youtube,
+    tiktok,
+    threads
 }
