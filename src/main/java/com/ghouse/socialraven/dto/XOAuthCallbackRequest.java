@@ -1,11 +1,16 @@
-// com.ghouse.socialraven.dto.XOAuthCallbackRequest
 package com.ghouse.socialraven.dto;
 
 import lombok.Data;
 
 @Data
 public class XOAuthCallbackRequest {
-    private String code;
-    private String codeVerifier;
-    private String appUserId; // from Clerk / frontend
+    // OAuth 1.0a fields (received from frontend)
+    private String accessToken;
+    private String accessTokenSecret;
+    private String userId;          // X user ID
+    private String screenName;      // X username (@handle)
+    
+    // Deprecated OAuth 2.0 fields (remove if not used elsewhere)
+    // private String code;
+    // private String codeVerifier;
 }

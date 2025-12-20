@@ -10,6 +10,7 @@ import com.ghouse.socialraven.dto.PostResponse;
 import com.ghouse.socialraven.dto.SchedulePost;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.entity.PostEntity;
+import com.ghouse.socialraven.helper.PostPoolHelper;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.ghouse.socialraven.repo.PostMediaRepo;
 import com.ghouse.socialraven.repo.PostRepo;
@@ -105,12 +106,13 @@ public class PostService {
         long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
 
         try (Jedis jedis = jedisPool.getResource()) {
-            jedis.zadd("posts-pool-1", epochUtcMillis, postId.toString());
+            jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, postId.toString());
             log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", postId, scheduleTime);
         }
 
         return schedulePost;
     }
+
 
 
     public Page<PostResponse> getUserPosts(String userId, int page, PostStatus postStatus) {

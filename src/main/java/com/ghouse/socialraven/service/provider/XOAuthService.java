@@ -8,7 +8,6 @@ import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
-import io.micrometer.common.util.StringUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,28 +15,28 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
+import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Base64;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class XOAuthService {
 
-    @Value("${x.client.id}")
-    private String clientId;
+    @Value("${x.api.key}") // Consumer Key (OAuth 1.0a)
+    private String apiKey;
 
-    @Value("${x.client.secret}")
-    private String clientSecret;
+    @Value("${x.api.secret}") // Consumer Secret (OAuth 1.0a)
+    private String apiSecret;
 
     @Value("${x.callback.uri}")
     private String callbackUri;
@@ -51,203 +50,238 @@ public class XOAuthService {
     @Autowired
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
-    // X API base URLs (using x.com, not twitter.com)
-    private static final String X_TOKEN_URL = "https://api.x.com/2/oauth2/token";
-    private static final String X_USER_ME_URL = "https://api.x.com/2/users/me?user.fields=profile_image_url,name";
+    // OAuth 1.0a URLs
+    private static final String REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token";
+    private static final String ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token";
+    private static final String VERIFY_CREDENTIALS_URL = "https://api.twitter.com/1.1/account/verify_credentials.json";
 
+    /**
+     * Handle OAuth 1.0a callback from frontend
+     * Frontend sends: accessToken, accessTokenSecret, userId, screenName
+     */
     public void handleCallback(XOAuthCallbackRequest req) {
+        log.info("X OAuth 1.0a callback for user: {}", req.getScreenName());
 
-        log.info("X OAuth with clientId:{} and CallBackUrl: {}", clientId, callbackUri);
-
-        // 1) Exchange code for tokens
-        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-        form.add("grant_type", "authorization_code");
-        form.add("code", req.getCode());
-        form.add("redirect_uri", callbackUri);
-        form.add("client_id", clientId);
-        form.add("code_verifier", req.getCodeVerifier());
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        // confidential client: send client_secret as Basic auth
-        String basic = Base64.getEncoder()
-                .encodeToString((clientId + ":" + clientSecret)
-                        .getBytes(StandardCharsets.UTF_8));
-        headers.set("Authorization", "Basic " + basic);
-
-        HttpEntity<MultiValueMap<String, String>> entity =
-                new HttpEntity<>(form, headers);
-
-        ResponseEntity<Map> tokenResp = restTemplate.postForEntity(
-                X_TOKEN_URL,  // Updated to use x.com
-                entity,
-                Map.class
-        );
-
-        if (!tokenResp.getStatusCode().is2xxSuccessful()) {
-            throw new RuntimeException("Token exchange failed: " + tokenResp);
-        }
-
-        Map body = tokenResp.getBody();
-        String accessToken = (String) body.get("access_token");
-        String refreshToken = (String) body.get("refresh_token");
-        Integer expiresIn = (Integer) body.get("expires_in");
-
-        OffsetDateTime expiresAtUtc = OffsetDateTime
-                .now(ZoneOffset.UTC)
-                .plusSeconds(expiresIn.longValue());
-        long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
-
-        // 2) Fetch X user profile with OAuth2 Bearer
-        HttpHeaders profileHeaders = new HttpHeaders();
-        profileHeaders.setBearerAuth(accessToken);
-
-        HttpEntity<Void> profileEntity = new HttpEntity<>(profileHeaders);
-
-        ResponseEntity<Map> profileResp = restTemplate.exchange(
-                X_USER_ME_URL,  // Updated to use x.com
-                HttpMethod.GET,
-                profileEntity,
-                Map.class
-        );
-
-        if (!profileResp.getStatusCode().is2xxSuccessful()) {
-            throw new RuntimeException("Profile fetch failed: " + profileResp);
-        }
-
-        Map data = (Map) profileResp.getBody().get("data");
-        String providerUserId = (String) data.get("id");
-        String name = (String) data.get("name");
-        String profileImageUrl = (String) data.get("profile_image_url");
-
-        // 3) Persist in DB
-        OAuthInfoEntity info = new OAuthInfoEntity();
-        info.setProvider(Provider.X);
-        info.setProviderUserId(providerUserId);
-        info.setAccessToken(accessToken);
-        info.setExpiresAt(expiresAtMillis);
-        info.setExpiresAtUtc(expiresAtUtc);
-        info.setUserId(req.getAppUserId());
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        info.setUserId(userId);
 
-        AdditionalOAuthInfo add = new AdditionalOAuthInfo();
-        add.setXRefreshToken(refreshToken);
-        info.setAdditionalInfo(add);
-
-        OAuthInfoEntity existingAuthInfo = oAuthInfoRepo.findByUserIdAndProviderAndProviderUserId(userId, Provider.X, info.getProviderUserId());
-        if (existingAuthInfo != null) {
-            info.setId(existingAuthInfo.getId());
-        }
-
-        oAuthInfoRepo.save(info);
-        redisTokenExpirySaver.saveTokenExpiry(info);
-    }
-
-
-    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity authInfo) {
+        // Verify the tokens by making an API call
         try {
-            long now = System.currentTimeMillis();
-            if (authInfo.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
-                return authInfo;
-            }
+            Map<String, Object> userInfo = verifyCredentials(req.getAccessToken(), req.getAccessTokenSecret());
 
-            // Check if refresh token exists
-            if (StringUtils.isEmpty(authInfo.getAdditionalInfo().getXRefreshToken())) {
-                throw new RuntimeException("No refresh token available. User needs to reconnect X account.");
-            }
+            String providerUserId = userInfo.get("id_str").toString();
+            String screenName = (String) userInfo.get("screen_name");
 
-            // Token expired or about to expire, refresh it
-            log.info("X access token expired or expiring soon, refreshing...");
-            return refreshAccessToken(authInfo);
-
-        } catch (Exception e) {
-            log.error("Failed to get valid X OAuth info: {}", e.getMessage());
-            throw new RuntimeException("Cannot obtain valid X access token: " + e.getMessage(), e);
-        }
-    }
-
-
-    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity authInfo) {
-        try {
-            log.info("Refreshing X access token for user: {}", authInfo.getProviderUserId());
-
-            // X requires Basic Auth with client credentials
-            String credentials = clientId + ":" + clientSecret;
-            String encodedCredentials = Base64.getEncoder().encodeToString(credentials.getBytes());
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-            headers.set("Authorization", "Basic " + encodedCredentials);
-
-            // Build form body
-            MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-            body.add("grant_type", "refresh_token");
-            body.add("refresh_token", authInfo.getAdditionalInfo().getXRefreshToken());
-            body.add("client_id", clientId);
-
-            HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
-
-            log.debug("Sending token refresh request to X");
-            ResponseEntity<Map> response = restTemplate.postForEntity(X_TOKEN_URL, request, Map.class);  // Updated to use x.com
-
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new RuntimeException("X token refresh failed with status: " + response.getStatusCode());
-            }
-
-            Map<String, Object> responseBody = response.getBody();
-
-            // Extract tokens from response
-            String newAccessToken = (String) responseBody.get("access_token");
-            String newRefreshToken = (String) responseBody.get("refresh_token");
-            Integer expiresIn = (Integer) responseBody.get("expires_in");
-
-            if (newAccessToken == null) {
-                throw new RuntimeException("X response missing access_token");
-            }
-
-            OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC)
-                    .plusSeconds(expiresIn.longValue());
+            // OAuth 1.0a tokens don't expire, so set a far future date
+            OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC).plusYears(100);
             long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
 
-            // Update DB
-            authInfo.setAccessToken(newAccessToken);
-            authInfo.setExpiresAt(expiresAtMillis);
-            authInfo.setExpiresAtUtc(expiresAtUtc);
+            // Check if user already connected this X account
+            OAuthInfoEntity existingAuthInfo = oAuthInfoRepo.findByUserIdAndProviderAndProviderUserId(
+                    userId, Provider.X, providerUserId
+            );
 
-            if (newRefreshToken != null) {
-                authInfo.getAdditionalInfo().setXRefreshToken(newRefreshToken);
+            OAuthInfoEntity info;
+            if (existingAuthInfo != null) {
+                log.info("Updating existing X OAuth connection for user: {}", screenName);
+                info = existingAuthInfo;
+            } else {
+                log.info("Creating new X OAuth connection for user: {}", screenName);
+                info = new OAuthInfoEntity();
+                info.setProvider(Provider.X);
+                info.setProviderUserId(providerUserId);
+                info.setUserId(userId);
             }
 
-            // Save updated tokens to database
-            log.info("Successfully refreshed X access token");
-            OAuthInfoEntity updatedOAuthInfo = oAuthInfoRepo.save(authInfo);
-            redisTokenExpirySaver.saveTokenExpiry(updatedOAuthInfo);
-            return updatedOAuthInfo;
+            // Update token info
+            info.setAccessToken(req.getAccessToken());
+            info.setExpiresAt(expiresAtMillis);
+            info.setExpiresAtUtc(expiresAtUtc);
 
-        } catch (HttpClientErrorException e) {
-            log.error("X Token Refresh Failed - Status: {}, Body: {}",
-                    e.getStatusCode(), e.getResponseBodyAsString());
-
-            // Handle specific error cases
-            if (e.getStatusCode().value() == 400) {
-                String errorBody = e.getResponseBodyAsString();
-
-                // Check if refresh token is invalid/expired
-                if (errorBody.contains("invalid_request") || errorBody.contains("invalid_grant")) {
-                    log.error("Refresh token is invalid or expired for user: {}",
-                            authInfo.getProviderUserId());
-
-                    // Mark the OAuth connection as invalid so user needs to reconnect
-                    throw new RuntimeException("X refresh token expired. User needs to reconnect their X account.", e);
-                }
+            // Store token secret in additionalInfo (REQUIRED for non-null constraint)
+            AdditionalOAuthInfo additionalInfo = info.getAdditionalInfo();
+            if (additionalInfo == null) {
+                additionalInfo = new AdditionalOAuthInfo();
+                info.setAdditionalInfo(additionalInfo); // Set it immediately to avoid null
             }
+            additionalInfo.setXTokenSecret(req.getAccessTokenSecret());
 
-            throw new RuntimeException("Failed to refresh X access token: " + e.getMessage(), e);
+            oAuthInfoRepo.save(info);
+            redisTokenExpirySaver.saveTokenExpiry(info);
+
+            log.info("Successfully saved X OAuth 1.0a tokens for @{}", screenName);
+
         } catch (Exception e) {
-            log.error("Unexpected error refreshing X token: {}", e.getMessage(), e);
-            throw new RuntimeException("X token refresh failed", e);
+            log.error("Failed to verify X credentials: {}", e.getMessage(), e);
+            throw new RuntimeException("Invalid X OAuth tokens: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Verify credentials using OAuth 1.0a
+     */
+    private Map<String, Object> verifyCredentials(String accessToken, String tokenSecret) {
+        try {
+            String baseUrl = VERIFY_CREDENTIALS_URL;
+
+            Map<String, String> oauthParams = new LinkedHashMap<>();
+            oauthParams.put("oauth_consumer_key", apiKey);
+            oauthParams.put("oauth_token", accessToken);
+            oauthParams.put("oauth_signature_method", "HMAC-SHA1");
+            oauthParams.put("oauth_timestamp", String.valueOf(System.currentTimeMillis() / 1000));
+            oauthParams.put("oauth_nonce", generateNonce());
+            oauthParams.put("oauth_version", "1.0");
+
+            // Add query parameters to signature calculation
+            Map<String, String> allParams = new LinkedHashMap<>(oauthParams);
+            allParams.put("include_email", "true");
+
+            // Generate signature with ALL parameters (OAuth + query params)
+            String signature = generateSignature("GET", baseUrl, allParams, tokenSecret);
+            oauthParams.put("oauth_signature", signature);
+
+            // Build Authorization header (only OAuth params, NOT query params)
+            String authHeader = "OAuth " + oauthParams.entrySet().stream()
+                    .map(e -> urlEncode(e.getKey()) + "=\"" + urlEncode(e.getValue()) + "\"")
+                    .collect(Collectors.joining(", "));
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", authHeader);
+
+            // Make request with query parameter in URL
+            String requestUrl = baseUrl + "?include_email=true";
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    requestUrl, HttpMethod.GET, entity, Map.class
+            );
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("Failed to verify credentials: " + response.getStatusCode());
+            }
+
+            return response.getBody();
+
+        } catch (Exception e) {
+            log.error("Error verifying X credentials: {}", e.getMessage());
+            log.error("Complete Error - Error verifying X credentials ", e);
+            throw new RuntimeException("Failed to verify X credentials", e);
+        }
+    }
+
+
+    /**
+     * Get valid OAuth info (OAuth 1.0a tokens don't expire)
+     */
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity authInfo) {
+        // OAuth 1.0a tokens don't expire, but verify they're still valid
+        try {
+            String tokenSecret = authInfo.getAdditionalInfo().getXTokenSecret();
+            if (tokenSecret == null) {
+                throw new RuntimeException("Missing X token secret. User needs to reconnect.");
+            }
+
+            // Optionally verify the token is still valid
+            verifyCredentials(authInfo.getAccessToken(), tokenSecret);
+
+            return authInfo;
+
+        } catch (Exception e) {
+            log.error("X OAuth token validation failed: {}", e.getMessage());
+            throw new RuntimeException("X token is invalid. User needs to reconnect their X account.", e);
+        }
+    }
+
+    /**
+     * Generate OAuth 1.0a signature
+     */
+    private String generateSignature(String method, String url, Map<String, String> params, String tokenSecret) {
+        try {
+            // Sort parameters
+            String paramString = params.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .map(e -> urlEncode(e.getKey()) + "=" + urlEncode(e.getValue()))
+                    .collect(Collectors.joining("&"));
+
+            // Create signature base string
+            String signatureBase = method.toUpperCase() + "&" +
+                    urlEncode(url) + "&" +
+                    urlEncode(paramString);
+
+            // Create signing key
+            String signingKey = urlEncode(apiSecret) + "&" + urlEncode(tokenSecret != null ? tokenSecret : "");
+
+            // Generate HMAC-SHA1 signature
+            Mac mac = Mac.getInstance("HmacSHA1");
+            SecretKeySpec secret = new SecretKeySpec(signingKey.getBytes(StandardCharsets.UTF_8), "HmacSHA1");
+            mac.init(secret);
+            byte[] digest = mac.doFinal(signatureBase.getBytes(StandardCharsets.UTF_8));
+
+            return Base64.getEncoder().encodeToString(digest);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to generate OAuth signature", e);
+        }
+    }
+
+    /**
+     * Generate random nonce
+     */
+    private String generateNonce() {
+        SecureRandom random = new SecureRandom();
+        byte[] bytes = new byte[32];
+        random.nextBytes(bytes);
+        return Base64.getEncoder().encodeToString(bytes).replaceAll("[^A-Za-z0-9]", "");
+    }
+
+    /**
+     * URL encode helper
+     */
+    private String urlEncode(String value) {
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+                    .replace("+", "%20")
+                    .replace("*", "%2A")
+                    .replace("%7E", "~");
+        } catch (Exception e) {
+            throw new RuntimeException("URL encoding failed", e);
+        }
+    }
+
+    /**
+     * Make authenticated API call using OAuth 1.0a
+     * Use this method when you need to call Twitter API with user's credentials
+     */
+    public <T> ResponseEntity<T> makeAuthenticatedRequest(
+            String url,
+            HttpMethod method,
+            OAuthInfoEntity authInfo,
+            Class<T> responseType) {
+
+        String tokenSecret = authInfo.getAdditionalInfo().getXTokenSecret();
+        if (tokenSecret == null) {
+            throw new RuntimeException("Missing X token secret");
+        }
+
+        Map<String, String> oauthParams = new LinkedHashMap<>();
+        oauthParams.put("oauth_consumer_key", apiKey);
+        oauthParams.put("oauth_token", authInfo.getAccessToken());
+        oauthParams.put("oauth_signature_method", "HMAC-SHA1");
+        oauthParams.put("oauth_timestamp", String.valueOf(System.currentTimeMillis() / 1000));
+        oauthParams.put("oauth_nonce", generateNonce());
+        oauthParams.put("oauth_version", "1.0");
+
+        // Generate signature
+        String signature = generateSignature(method.name(), url, oauthParams, tokenSecret);
+        oauthParams.put("oauth_signature", signature);
+
+        // Build Authorization header
+        String authHeader = "OAuth " + oauthParams.entrySet().stream()
+                .map(e -> urlEncode(e.getKey()) + "=\"" + urlEncode(e.getValue()) + "\"")
+                .collect(Collectors.joining(", "));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", authHeader);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        return restTemplate.exchange(url, method, entity, responseType);
     }
 }

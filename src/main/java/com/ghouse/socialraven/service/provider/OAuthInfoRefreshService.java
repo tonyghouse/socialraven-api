@@ -80,8 +80,6 @@ public class OAuthInfoRefreshService {
             try {
                 if (Provider.LINKEDIN.equals(oauthInfo.getProvider())) {
                     linkedInOAuthService.refreshAccessToken(oauthInfo);
-                } else if (Provider.X.equals(oauthInfo.getProvider())) {
-                    xOAuthService.refreshAccessToken(oauthInfo);
                 } else if (Provider.YOUTUBE.equals(oauthInfo.getProvider())) {
                     youTubeOAuthService.getValidOAuthInfo(oauthInfo);
                 } else {

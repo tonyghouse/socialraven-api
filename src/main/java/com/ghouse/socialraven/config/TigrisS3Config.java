@@ -43,9 +43,6 @@ public class TigrisS3Config {
                 .build();
     }
 
-    // ---------------------------------------------------------
-    // 1️⃣ Pre-signed URL generator (your current working code)
-    // ---------------------------------------------------------
     @Bean
     public S3Presigner s3Presigner() {
         return S3Presigner.builder()
@@ -56,9 +53,6 @@ public class TigrisS3Config {
     }
 
 
-    // ---------------------------------------------------------
-    // 2️⃣ S3 Client (useful for uploads, deletes, bucket ops)
-    // ---------------------------------------------------------
     @Bean
     public S3Client s3Client() {
         return S3Client.builder()
@@ -69,10 +63,6 @@ public class TigrisS3Config {
                 .build();
     }
 
-
-    // ---------------------------------------------------------
-    // 3️⃣ Async S3 Client (optional, but good for high throughput)
-    // ---------------------------------------------------------
     @Bean
     public S3AsyncClient s3AsyncClient() {
         return S3AsyncClient.builder()

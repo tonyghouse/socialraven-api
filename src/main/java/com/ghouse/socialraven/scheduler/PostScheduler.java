@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.scheduler;
 
+import com.ghouse.socialraven.helper.PostPoolHelper;
 import com.ghouse.socialraven.service.post.PostPublisherService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +31,7 @@ public class PostScheduler {
     @Scheduled(cron = "0 */5 * * * *", zone = "UTC")
     public void schedulePosts() {
         log.info("Running Schedule Posts");
-        String redisKey = "posts-pool-1";
+        String redisKey = PostPoolHelper.getPostsPoolName();
 
         long now = Instant.now().toEpochMilli();
         long next5Min = Instant.now().plus(5, ChronoUnit.MINUTES).toEpochMilli();

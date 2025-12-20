@@ -8,14 +8,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @Data
 public class AdditionalOAuthInfo {
 
-    private String xRefreshToken;
-
+    private String xTokenSecret;        // OAuth 1.0a token secret (REQUIRED)
 
     private String youtubeRefreshToken;
-
-    private String facebookPageId;
-
-    private String instagramBusinessId;
-
 
 }
