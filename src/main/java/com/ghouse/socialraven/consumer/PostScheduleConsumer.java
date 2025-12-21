@@ -18,7 +18,10 @@ public class PostScheduleConsumer {
     /**
      * Consumes messages from RabbitMQ queue: post-publish-queue
      */
-    @RabbitListener(queues = "post-publish-queue")
+    @RabbitListener(
+            queues = "post-publish-queue",
+            containerFactory = "rabbitListenerContainerFactory"
+    )
     public void schedulePosts(String postId) {
         try {
             Long id = Long.valueOf(postId);
