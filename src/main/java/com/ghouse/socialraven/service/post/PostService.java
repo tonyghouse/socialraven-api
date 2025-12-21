@@ -75,11 +75,10 @@ public class PostService {
         post.setDescription(schedulePost.getDescription());
         //Single provider
         Platform platform = connectedAccounts.stream().findFirst().get().getPlatform();
-        Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
         List<String> providerIds = connectedAccounts.stream().map(x -> x.getProviderUserId()).distinct().toList();
         post.setProviderUserIds(providerIds);
 
-        post.setScheduledTime(OffsetDateTime.now());
+        post.setScheduledTime(schedulePost.getScheduledTime());
 
 
         List<PostMedia> media = schedulePost.getMedia() != null ? schedulePost.getMedia() : Collections.emptyList();
@@ -120,7 +119,7 @@ public class PostService {
         if (page == -1) {
             pageable = Pageable.unpaged();   // fetch all
         } else {
-            pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
+            pageable = PageRequest.of(page, 3, Sort.by("scheduledTime").descending());
         }
 
 

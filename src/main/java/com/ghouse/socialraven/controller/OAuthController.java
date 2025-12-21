@@ -7,7 +7,6 @@ import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
-import com.ghouse.socialraven.service.session.OAuthSessionService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,9 +47,6 @@ public class OAuthController {
 
     @Autowired
     private FacebookOAuthService facebookOAuthService;
-
-    @Autowired
-    private OAuthSessionService oAuthSessionService;
 
     @Autowired
     private JedisPool jedisPool;
