@@ -30,43 +30,15 @@ public class OAuthInfoRefreshService {
     @Autowired
     private ExecutorService virtualThreadExecutor; // injected bean
 
-    public void refreshOAuthInfos(List<Long> oauthInfoIds) {
-        List<OAuthInfoEntity> oauthInfos = oAuthInfoRepo.findAllById(oauthInfoIds);
+    public void refreshOAuthInfo(Long id) {
 
-        List<java.util.concurrent.Future<Boolean>> futures = new ArrayList<>(oauthInfos.size());
+        OAuthInfoEntity oauthInfo = oAuthInfoRepo.findById(id).orElse(null);
 
-        // submit one virtual-thread task per oauthInfo
-        for (OAuthInfoEntity oauthInfo : oauthInfos) {
-            futures.add(virtualThreadExecutor.submit(() -> {
-                try {
-                    return refreshToken(oauthInfo); // returns true on success, false on failure
-                } catch (Exception e) {
-                    log.error("Unhandled error while refreshing id {} : {}", oauthInfo.getId(), e.getMessage(), e);
-                    // If refreshToken didn't already send email, do it here (defensive)
-                    sendFailureEmail(oauthInfo);
-                    return false;
-                }
-            }));
+
+        if(oauthInfo!=null){
+            refreshToken(oauthInfo);
         }
 
-        // wait for completion and log results (optional)
-        for (int i = 0; i < futures.size(); i++) {
-            var f = futures.get(i);
-            var oauthInfo = oauthInfos.get(i);
-            try {
-                // wait indefinitely or choose a timeout per task
-                boolean ok = f.get(); // you can also use get(timeout, unit)
-                if (!ok) {
-                    log.warn("Refresh failed for id {} after retries.", oauthInfo.getId());
-                } else {
-                    log.info("Refresh succeeded for id {}", oauthInfo.getId());
-                }
-            } catch (Exception e) {
-                log.error("Error while waiting for refresh of id {}: {}", oauthInfo.getId(), e.getMessage(), e);
-                // ensure email was sent
-                sendFailureEmail(oauthInfo);
-            }
-        }
     }
 
     /**
@@ -103,14 +75,13 @@ public class OAuthInfoRefreshService {
         }
 
         if (!success) {
-            sendFailureEmail(oauthInfo);
+           throw new RuntimeException("Failed to refresh token oauth info id: "+ oauthInfo.getId());
         }
 
         return success;
     }
 
-    private void sendFailureEmail(OAuthInfoEntity oauthInfo) {
-        // TODO: implement actual email sender later
-        log.warn("Sending failure email for OAuthInfo id {}", oauthInfo.getId());
-    }
+
+
+
 }

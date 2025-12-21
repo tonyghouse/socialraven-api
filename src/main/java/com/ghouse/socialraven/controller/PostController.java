@@ -8,7 +8,9 @@ import com.ghouse.socialraven.util.SecurityContextUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,6 +46,20 @@ public class PostController {
     }
 
 
+    @GetMapping("/{postId}")
+    public PostResponse getPostById(@PathVariable Long postId
+    ) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        PostResponse post = postService.getPostById(userId, postId);
+        return post;
+    }
+
+    @DeleteMapping("/{postId}")
+    public void deletePostById(@PathVariable Long postId
+    ) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        postService.deletePostById(userId, postId);
+    }
 
 
 }

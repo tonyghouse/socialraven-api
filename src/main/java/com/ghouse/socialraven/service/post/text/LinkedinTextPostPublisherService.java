@@ -39,13 +39,10 @@ public class LinkedinTextPostPublisherService {
     @Autowired
     private LinkedInOAuthService linkedInOAuthService;
 
-    @Autowired
-    private XOAuthService xOAuthService;
-
 
     public void postTextToLinkedin(PostEntity post, OAuthInfoEntity authInfo) {
         try {
-            OAuthInfoEntity validOAuthInfo = xOAuthService.getValidOAuthInfo(authInfo);
+            OAuthInfoEntity validOAuthInfo = linkedInOAuthService.getValidOAuthInfo(authInfo);
             String accessToken = validOAuthInfo.getAccessToken();
 
             // LinkedIn user ID stored from OAuth callback

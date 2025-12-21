@@ -119,7 +119,7 @@ public class PostService {
         if (page == -1) {
             pageable = Pageable.unpaged();   // fetch all
         } else {
-            pageable = PageRequest.of(page, 3, Sort.by("scheduledTime").descending());
+            pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
         }
 
 
@@ -183,4 +183,29 @@ public class PostService {
             return getPostResponse(post, connectedAccountMap);
         });
     }
+
+    public PostResponse getPostById(String userId, Long postId) {
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+
+
+        PostEntity post = postRepo.findById(postId).orElse(null);
+        if(post == null){
+            throw new RuntimeException("Post not found");
+        }
+
+        return getPostResponse(post, connectedAccountMap);
+    }
+
+    public void deletePostById(String userId, Long postId) {
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zrem(PostPoolHelper.getPostsPoolName(), postId.toString());
+
+        }
+
+        postRepo.deleteById(postId);
+    }
+
 }
