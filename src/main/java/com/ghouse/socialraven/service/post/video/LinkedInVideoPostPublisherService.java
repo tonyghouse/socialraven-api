@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.post.video;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
@@ -12,6 +13,10 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.List;
 import java.util.Map;
 
@@ -21,9 +26,6 @@ public class LinkedInVideoPostPublisherService {
 
     @Autowired
     private RestTemplate restTemplate;
-
-    // Create a clean RestTemplate without any interceptors for pre-signed URL uploads
-    private final RestTemplate cleanRestTemplate = new RestTemplate();
 
     @Autowired
     private LinkedInOAuthService linkedInOAuthService;
@@ -36,16 +38,23 @@ public class LinkedInVideoPostPublisherService {
 
     // LinkedIn API endpoints
     private static final String VIDEO_INIT_URL = "https://api.linkedin.com/rest/videos?action=initializeUpload";
-    private static final String VIDEO_STATUS_URL = "https://api.linkedin.com/rest/videos/";
+    private static final String VIDEO_FINALIZE_URL = "https://api.linkedin.com/rest/videos?action=finalizeUpload";
     private static final String POST_CREATE_URL = "https://api.linkedin.com/rest/posts";
 
     // LinkedIn video limits
     private static final long MAX_VIDEO_SIZE = 5L * 1024 * 1024 * 1024; // 5GB
     private static final long MIN_VIDEO_SIZE = 75 * 1024; // 75KB
 
+    // Cache for upload instructions (in production, use Redis)
+    private final Map<String, List<Map<String, Object>>> uploadInstructionsCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Cache for uploaded part ETags
+    private final Map<String, List<String>> uploadedPartsCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     public void postVideosToLinkedIn(PostEntity post,
                                      List<PostMediaEntity> mediaFiles,
-                                     OAuthInfoEntity authInfo) {
+                                     OAuthInfoEntity authInfo,
+                                     PostCollectionEntity postCollection) {
         try {
             // Step 0: Validate inputs
             if (mediaFiles == null || mediaFiles.isEmpty()) {
@@ -88,13 +97,17 @@ public class LinkedInVideoPostPublisherService {
             uploadVideoToLinkedIn(videoBytes, videoUrn, accessToken);
             log.info("Video uploaded successfully");
 
-            // Step 4: Wait for video processing
-            waitForVideoProcessing(videoUrn, accessToken);
-            log.info("Video processing completed");
+            // Step 4: Finalize the upload (CRITICAL - tells LinkedIn upload is complete)
+            finalizeVideoUpload(videoUrn, accessToken);
+            log.info("Video upload finalized");
 
-            // Step 5: Create post with video
+            // Step 5: Wait a bit for LinkedIn to process
+            log.info("Waiting 5 seconds for LinkedIn to register the finalized video...");
+            Thread.sleep(5000);
+
+            // Step 6: Create post with video
             log.info("Creating LinkedIn post with video...");
-            createPostWithVideo(post, videoUrn, accessToken, linkedInUserId);
+            createPostWithVideo(post, videoUrn, accessToken, linkedInUserId, postCollection);
 
             log.info("=== LinkedIn Video Post Success ===");
             log.info("PostID: {}", post.getId());
@@ -222,11 +235,8 @@ public class LinkedInVideoPostPublisherService {
         }
     }
 
-    // Cache for upload instructions (in production, use Redis)
-    private final Map<String, List<Map<String, Object>>> uploadInstructionsCache = new java.util.concurrent.ConcurrentHashMap<>();
-
     /**
-     * STEP 3: Wait for video processing
+     * STEP 2: Upload video to LinkedIn using chunked upload
      * LinkedIn uses CHUNKED upload for videos > 4MB
      */
     private void uploadVideoToLinkedIn(byte[] videoBytes, String videoUrn, String accessToken) {
@@ -239,6 +249,9 @@ public class LinkedInVideoPostPublisherService {
             }
 
             log.info("Uploading {} bytes to LinkedIn in {} chunks...", videoBytes.length, uploadInstructions.size());
+
+            // List to store ETags from successful uploads
+            List<String> uploadedPartETags = new java.util.ArrayList<>();
 
             // Upload each chunk
             for (int i = 0; i < uploadInstructions.size(); i++) {
@@ -257,13 +270,19 @@ public class LinkedInVideoPostPublisherService {
                 log.info("Uploading chunk {}/{}: bytes {}-{} ({} bytes)",
                         i + 1, uploadInstructions.size(), firstByte, lastByte, chunkSize);
 
-                // Upload chunk
-                uploadChunk(chunk, uploadUrl, i + 1, uploadInstructions.size());
+                // Upload chunk and get ETag
+                String etag = uploadChunk(chunk, uploadUrl, i + 1, uploadInstructions.size());
+                uploadedPartETags.add(etag);
+
+                log.info("Chunk {}/{} uploaded with ETag: {}", i + 1, uploadInstructions.size(), etag);
             }
 
             log.info("All chunks uploaded successfully to LinkedIn");
 
-            // Clean up cache
+            // Store ETags for finalize step
+            uploadedPartsCache.put(videoUrn, uploadedPartETags);
+
+            // Clean up upload instructions cache
             uploadInstructionsCache.remove(videoUrn);
 
         } catch (org.springframework.web.client.HttpClientErrorException e) {
@@ -278,136 +297,142 @@ public class LinkedInVideoPostPublisherService {
     }
 
     /**
-     * Upload a single chunk to LinkedIn
-     * IMPORTANT: LinkedIn upload URLs are pre-signed and DON'T need ANY authentication
-     * Use cleanRestTemplate without interceptors
+     * Upload a single chunk to LinkedIn using HttpURLConnection
+     * CRITICAL: LinkedIn upload URLs are pre-signed and must NOT have ANY authentication headers
+     * Using raw HttpURLConnection to avoid any RestTemplate interceptors or default headers
+     * Returns the ETag from the response
      */
-    private void uploadChunk(byte[] chunk, String uploadUrl, int chunkNumber, int totalChunks) {
+    private String uploadChunk(byte[] chunk, String uploadUrl, int chunkNumber, int totalChunks) {
+        HttpURLConnection connection = null;
         try {
-            HttpHeaders headers = new HttpHeaders();
-            // CRITICAL: Only these two headers, NO Authorization!
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentLength(chunk.length);
-
-            HttpEntity<byte[]> request = new HttpEntity<>(chunk, headers);
-
             log.debug("Uploading chunk {}/{} ({} bytes) to pre-signed URL", chunkNumber, totalChunks, chunk.length);
 
-            // Use cleanRestTemplate to avoid any default headers/interceptors
-            ResponseEntity<String> response = cleanRestTemplate.exchange(
-                    uploadUrl,
-                    HttpMethod.PUT,
-                    request,
-                    String.class
-            );
+            // Use HttpURLConnection directly to avoid any interceptors
+            URL url = new URL(uploadUrl);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("PUT");
+            connection.setDoOutput(true);
 
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new RuntimeException("Chunk upload failed with status: " + response.getStatusCode());
+            // ONLY these headers - NO Authorization or Bearer token!
+            connection.setRequestProperty("Content-Type", "application/octet-stream");
+            connection.setRequestProperty("Content-Length", String.valueOf(chunk.length));
+
+            // Write chunk data
+            try (OutputStream os = connection.getOutputStream()) {
+                os.write(chunk);
+                os.flush();
             }
 
-            log.debug("Chunk {}/{} uploaded successfully", chunkNumber, totalChunks);
+            // Check response
+            int responseCode = connection.getResponseCode();
 
-        } catch (org.springframework.web.client.HttpClientErrorException e) {
-            log.error("Failed to upload chunk {}/{} - Status: {}, Body: {}",
-                    chunkNumber, totalChunks, e.getStatusCode(), e.getResponseBodyAsString());
-            throw new RuntimeException("Chunk upload failed: " + e.getStatusCode(), e);
-        } catch (Exception e) {
-            log.error("Failed to upload chunk {}/{}: {}", chunkNumber, totalChunks, e.getMessage(), e);
-            throw new RuntimeException("Chunk upload failed", e);
-        }
-    }
+            if (responseCode < 200 || responseCode >= 300) {
+                String errorBody = "";
+                try {
+                    errorBody = new String(connection.getErrorStream().readAllBytes());
+                } catch (Exception e) {
+                    // Ignore error reading error stream
+                }
 
+                log.error("Failed to upload chunk {}/{} - Status: {}, Body: {}",
+                        chunkNumber, totalChunks, responseCode, errorBody);
+                throw new RuntimeException("Chunk upload failed: " + responseCode + " " + connection.getResponseMessage());
+            }
 
-    /**
-     * STEP 3: Wait for video processing
-     * LinkedIn processes videos asynchronously
-     */
-    private void waitForVideoProcessing(String videoUrn, String accessToken) {
-        try {
-            int maxAttempts = 60; // 5 minutes max (5 seconds * 60)
-            int attemptCount = 0;
-
-            // Extract video ID from URN (format: urn:li:video:123456)
-            String videoId = videoUrn.substring(videoUrn.lastIndexOf(":") + 1);
-
-            while (attemptCount < maxAttempts) {
-                String status = checkVideoStatus(videoId, accessToken);
-
-                if ("AVAILABLE".equalsIgnoreCase(status) || "READY".equalsIgnoreCase(status)) {
-                    log.info("Video processing completed successfully");
-                    return;
-                } else if ("FAILED".equalsIgnoreCase(status)) {
-                    throw new RuntimeException("Video processing failed on LinkedIn");
-                } else if ("PROCESSING".equalsIgnoreCase(status) || "UPLOADED".equalsIgnoreCase(status)) {
-                    log.debug("Video still processing, waiting... (attempt {}/{})", attemptCount + 1, maxAttempts);
-                    Thread.sleep(5000); // Wait 5 seconds
-                    attemptCount++;
-                } else {
-                    log.warn("Unknown video processing status: {}", status);
-                    Thread.sleep(5000);
-                    attemptCount++;
+            // Get ETag from response headers (critical for finalizing upload)
+            String etag = connection.getHeaderField("ETag");
+            if (etag == null || etag.isEmpty()) {
+                // Fallback: some services return it as 'Etag' or 'etag'
+                etag = connection.getHeaderField("Etag");
+                if (etag == null) {
+                    etag = connection.getHeaderField("etag");
                 }
             }
 
-            throw new RuntimeException("Video processing timeout (5 minutes)");
+            // Remove quotes from ETag if present
+            if (etag != null && etag.startsWith("\"") && etag.endsWith("\"")) {
+                etag = etag.substring(1, etag.length() - 1);
+            }
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Video processing interrupted", e);
-        } catch (Exception e) {
-            log.error("Failed to wait for video processing: {}", e.getMessage(), e);
-            throw new RuntimeException("Video processing check failed", e);
+            log.debug("Chunk {}/{} uploaded successfully - Status: {}, ETag: {}",
+                    chunkNumber, totalChunks, responseCode, etag);
+
+            return etag != null ? etag : "";
+
+        } catch (IOException e) {
+            log.error("Failed to upload chunk {}/{}: {}", chunkNumber, totalChunks, e.getMessage(), e);
+            throw new RuntimeException("Chunk upload failed: " + e.getMessage(), e);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 
     /**
-     * Check video processing status
+     * STEP 3: Finalize video upload
+     * This tells LinkedIn the upload is complete and the video is ready to use
      */
-    private String checkVideoStatus(String videoId, String accessToken) {
+    private void finalizeVideoUpload(String videoUrn, String accessToken) {
         try {
-            String url = VIDEO_STATUS_URL + videoId;
+            String url = VIDEO_FINALIZE_URL;
+
+            // Get uploaded part ETags from cache
+            List<String> uploadedPartETags = uploadedPartsCache.get(videoUrn);
+
+            if (uploadedPartETags == null || uploadedPartETags.isEmpty()) {
+                throw new RuntimeException("No uploaded parts found for videoUrn: " + videoUrn);
+            }
+
+            // Get upload token from the init response (if it exists)
+            String uploadToken = ""; // LinkedIn often doesn't require this
+
+            // Build finalize request body with uploadedPartIds
+            Map<String, Object> body = Map.of(
+                    "finalizeUploadRequest", Map.of(
+                            "video", videoUrn,
+                            "uploadToken", uploadToken,
+                            "uploadedPartIds", uploadedPartETags
+                    )
+            );
+
+            log.info("Finalizing upload for video URN: {}", videoUrn);
+            log.debug("Uploaded part ETags: {}", uploadedPartETags);
+            log.debug("Finalize request body: {}", body);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(accessToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("LinkedIn-Version", "202511");
             headers.set("X-RestLi-Protocol-Version", "2.0.0");
 
-            HttpEntity<Void> request = new HttpEntity<>(headers);
+            HttpEntity<Object> request = new HttpEntity<>(body, headers);
 
             ResponseEntity<Map> response = restTemplate.exchange(
                     url,
-                    HttpMethod.GET,
+                    HttpMethod.POST,
                     request,
                     Map.class
             );
 
-            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new RuntimeException("Failed to check video status");
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("Failed to finalize video upload");
             }
 
-            Map<String, Object> responseBody = response.getBody();
-            String status = (String) responseBody.get("status");
+            log.info("✓ Video upload finalized successfully");
+            log.debug("Finalize response: {}", response.getBody());
 
-            if (status != null) {
-                return status;
-            }
+            // Clean up cache
+            uploadedPartsCache.remove(videoUrn);
 
-            // Fallback to check recipes status
-            List<Map<String, Object>> recipes = (List<Map<String, Object>>) responseBody.get("recipes");
-            if (recipes != null && !recipes.isEmpty()) {
-                Map<String, Object> recipe = recipes.get(0);
-                status = (String) recipe.get("status");
-                if (status != null) {
-                    return status;
-                }
-            }
-
-            return "PROCESSING";
-
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            log.error("LinkedIn API Error during finalize - Status: {}, Body: {}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            throw new RuntimeException("LinkedIn video finalize failed: " +
+                    e.getStatusCode() + " - " + e.getResponseBodyAsString(), e);
         } catch (Exception e) {
-            log.error("Failed to check video status: {}", e.getMessage(), e);
-            // Return PROCESSING to continue waiting rather than failing immediately
-            return "PROCESSING";
+            log.error("Failed to finalize video upload: {}", e.getMessage(), e);
+            throw new RuntimeException("Video finalize failed", e);
         }
     }
 
@@ -417,11 +442,15 @@ public class LinkedInVideoPostPublisherService {
     private void createPostWithVideo(PostEntity post,
                                      String videoUrn,
                                      String accessToken,
-                                     String linkedInUserId) {
+                                     String linkedInUserId, PostCollectionEntity postCollection) {
         try {
             log.info("Creating LinkedIn post with video");
+            log.debug("Video URN: {}", videoUrn);
+            log.debug("LinkedIn User ID: {}", linkedInUserId);
+            log.debug("Post Title: {}", postCollection.getTitle());
+            log.debug("Post Description: {}", postCollection.getDescription());
 
-            String postText = post.getDescription() != null ? post.getDescription() : "";
+            String postText = postCollection.getDescription() != null ? postCollection.getDescription() : "";
 
             // Build post request body
             Map<String, Object> body = Map.of(
@@ -435,13 +464,15 @@ public class LinkedInVideoPostPublisherService {
                     ),
                     "content", Map.of(
                             "media", Map.of(
-                                    "title", post.getTitle() != null ? post.getTitle() : "",
+                                    "title", postCollection.getTitle() != null ? postCollection.getTitle() : "",
                                     "id", videoUrn  // Use video URN
                             )
                     ),
                     "lifecycleState", "PUBLISHED",
                     "isReshareDisabledByAuthor", false
             );
+
+            log.debug("Post request body: {}", body);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(accessToken);
@@ -451,7 +482,7 @@ public class LinkedInVideoPostPublisherService {
 
             HttpEntity<Object> entity = new HttpEntity<>(body, headers);
 
-            log.debug("Sending post creation request to LinkedIn");
+            log.debug("Sending post creation request to LinkedIn: {}", POST_CREATE_URL);
             ResponseEntity<String> response = restTemplate.exchange(
                     POST_CREATE_URL,
                     HttpMethod.POST,
@@ -459,12 +490,30 @@ public class LinkedInVideoPostPublisherService {
                     String.class
             );
 
+            log.info("LinkedIn post creation response code: {}", response.getStatusCode());
+
+            // Extract post URN from Location header
+            String locationHeader = response.getHeaders().getFirst("Location");
+            String xLinkedInId = response.getHeaders().getFirst("x-linkedin-id");
+
+            if (locationHeader != null) {
+                log.info("LinkedIn post created at: {}", locationHeader);
+            }
+            if (xLinkedInId != null) {
+                log.info("LinkedIn post ID: {}", xLinkedInId);
+            }
+
+            String responseBody = response.getBody();
+            if (responseBody != null && !responseBody.isEmpty()) {
+                log.info("LinkedIn post creation response body: {}", responseBody);
+            }
+
             if (!response.getStatusCode().is2xxSuccessful()) {
                 throw new RuntimeException("LinkedIn post creation failed with status: " +
                         response.getStatusCode());
             }
 
-            log.info("LinkedIn post with video created successfully - Response: {}", response.getBody());
+            log.info("✓ LinkedIn video post created successfully!");
 
         } catch (org.springframework.web.client.HttpClientErrorException e) {
             log.error("LinkedIn API Error - Status: {}, Body: {}",

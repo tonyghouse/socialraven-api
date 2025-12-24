@@ -1,14 +1,12 @@
 package com.ghouse.socialraven.service.post.text;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ghouse.socialraven.constant.PostStatus;
-import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
-import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.repo.PostCollectionRepo;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
-import com.ghouse.socialraven.service.provider.XOAuthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
@@ -20,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 @Service
@@ -28,7 +25,7 @@ import java.util.Map;
 public class LinkedinTextPostPublisherService {
 
     @Autowired
-    private PostRepo postRepo;
+    private PostCollectionRepo postRepo;
 
     @Autowired
     private RestTemplate rest;
@@ -40,7 +37,7 @@ public class LinkedinTextPostPublisherService {
     private LinkedInOAuthService linkedInOAuthService;
 
 
-    public void postTextToLinkedin(PostEntity post, OAuthInfoEntity authInfo) {
+    public void postTextToLinkedin(PostEntity post, OAuthInfoEntity authInfo, PostCollectionEntity postCollection) {
         try {
             OAuthInfoEntity validOAuthInfo = linkedInOAuthService.getValidOAuthInfo(authInfo);
             String accessToken = validOAuthInfo.getAccessToken();
@@ -54,7 +51,7 @@ public class LinkedinTextPostPublisherService {
             body.put("lifecycleState", "PUBLISHED");
 
             Map<String, Object> shareContent = Map.of(
-                    "shareCommentary", Map.of("text", post.getDescription()), // text content
+                    "shareCommentary", Map.of("text", postCollection.getDescription()), // text content
                     "shareMediaCategory", "NONE"
             );
 

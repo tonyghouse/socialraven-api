@@ -3,6 +3,7 @@ package com.ghouse.socialraven.service.post.image;
 import com.ghouse.socialraven.dto.LinkedInImageUploadResponse;
 import com.ghouse.socialraven.dto.LinkedInUploadInfo;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.service.provider.LinkedInOAuthService;
@@ -35,9 +36,9 @@ public class LinkedInImagePostPublisherService {
     private StorageService storageService;
 
 
-    public void postImagesToLinkedin(PostEntity post,
+    public void postImagesToLinkedin(PostEntity postEntity,
                                      List<PostMediaEntity> mediaFiles,
-                                     OAuthInfoEntity authInfo) {
+                                     OAuthInfoEntity authInfo, PostCollectionEntity postCollectionEntity) {
         try {
             // Step 0: Validate inputs
             if (mediaFiles == null || mediaFiles.isEmpty()) {
@@ -51,7 +52,7 @@ public class LinkedInImagePostPublisherService {
 
             log.info("=== LinkedIn Image Post Started ===");
             log.info("PostID: {}, MediaCount: {}, LinkedInUserID: {}",
-                    post.getId(), mediaFiles.size(), linkedinUserId);
+                    postEntity.getId(), mediaFiles.size(), linkedinUserId);
 
             List<String> imageUrns = new ArrayList<>();
 
@@ -87,19 +88,19 @@ public class LinkedInImagePostPublisherService {
 
             // Step 5: Create LinkedIn post with all uploaded images
             log.info("All {} images uploaded successfully. Creating LinkedIn post...", imageUrns.size());
-            postUGCWithImages(accessToken, post, imageUrns, linkedinUserId);
+            postUGCWithImages(accessToken, postEntity, imageUrns, linkedinUserId, postCollectionEntity);
 
             log.info("=== LinkedIn Image Post Success ===");
-            log.info("PostID: {}, ImagesPosted: {}", post.getId(), imageUrns.size());
+            log.info("PostID: {}, ImagesPosted: {}", postEntity.getId(), imageUrns.size());
 
         } catch (IllegalArgumentException e) {
             log.error("Invalid input for LinkedIn post - PostID: {} - Error: {}",
-                    post.getId(), e.getMessage());
+                    postEntity.getId(), e.getMessage());
             throw e;
         } catch (Exception exp) {
             log.error("=== LinkedIn Image Post Failed ===");
-            log.error("PostID: {}, Error: {}", post.getId(), exp.getMessage(), exp);
-            throw new RuntimeException("LinkedIn Image(s) Post Failed: " + post.getId(), exp);
+            log.error("PostID: {}, Error: {}", postEntity.getId(), exp.getMessage(), exp);
+            throw new RuntimeException("LinkedIn Image(s) Post Failed: " + postEntity.getId(), exp);
         }
     }
 
@@ -191,7 +192,7 @@ public class LinkedInImagePostPublisherService {
     private void postUGCWithImages(String accessToken,
                                    PostEntity post,
                                    List<String> imageUrns,
-                                   String linkedinUserId) {
+                                   String linkedinUserId,PostCollectionEntity postCollectionEntity ) {
 
         String url = "https://api.linkedin.com/rest/posts";
 
@@ -204,7 +205,7 @@ public class LinkedInImagePostPublisherService {
         // Build post request body
         Map<String, Object> body = Map.of(
                 "author", "urn:li:person:" + linkedinUserId,
-                "commentary", post.getDescription() != null ? post.getDescription() : "",
+                "commentary", postCollectionEntity.getDescription() != null ? postCollectionEntity.getDescription() : "",
                 "visibility", "PUBLIC",
                 "distribution", Map.of(
                         "feedDistribution", "MAIN_FEED",
@@ -213,7 +214,7 @@ public class LinkedInImagePostPublisherService {
                 ),
                 "content", Map.of(
                         "media", Map.of(
-                                "title", post.getTitle() != null ? post.getTitle() : "",
+                                "title", postCollectionEntity.getTitle() != null ? postCollectionEntity.getTitle() : "",
                                 "id", imageUrns.get(0) // Use first image as primary
                         )
                 ),

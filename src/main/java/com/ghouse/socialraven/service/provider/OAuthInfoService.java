@@ -2,8 +2,10 @@ package com.ghouse.socialraven.service.provider;
 
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -25,28 +27,27 @@ public class OAuthInfoService {
     @Autowired
     private YouTubeOAuthService youTubeOAuthService;
 
-    public List<OAuthInfoEntity> getOAuthInfos(String userId, List<String> providerUserIds) {
-        List<OAuthInfoEntity> oauthInfos = oAuthInfoRepo.findByUserIdAndProviderUserIdIn(userId, providerUserIds);
 
-        List<OAuthInfoEntity> validOAuthInfos = new ArrayList<>();
-        for(var oauthInfo : oauthInfos){
-            if(Provider.LINKEDIN.equals(oauthInfo.getProvider())){
-                OAuthInfoEntity validOAuthInfo = linkedInOAuthService.getValidOAuthInfo(oauthInfo);
-                validOAuthInfos.add(validOAuthInfo);
-            }
+    public OAuthInfoEntity getOAuthInfo(String userId, String providerUserId) {
 
-            if(Provider.X.equals(oauthInfo.getProvider())){
-                OAuthInfoEntity validOAuthInfo = xOAuthService.getValidOAuthInfo(oauthInfo);
-                validOAuthInfos.add(validOAuthInfo);
-            }
-
-            if(Provider.YOUTUBE.equals(oauthInfo.getProvider())){
-                OAuthInfoEntity validOAuthInfo = youTubeOAuthService.getValidOAuthInfo(oauthInfo);
-                validOAuthInfos.add(validOAuthInfo);
-            }
-
+        OAuthInfoEntity oauthInfo = oAuthInfoRepo.findByUserIdAndProviderUserId(userId, providerUserId);
+        if(oauthInfo == null){
+            throw new SocialRavenException("OAuthInfo not found", HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-        return validOAuthInfos;
+        if (Provider.LINKEDIN.equals(oauthInfo.getProvider())) {
+            return linkedInOAuthService.getValidOAuthInfo(oauthInfo);
+        }
+
+        if (Provider.X.equals(oauthInfo.getProvider())) {
+            return xOAuthService.getValidOAuthInfo(oauthInfo);
+        }
+
+        if (Provider.YOUTUBE.equals(oauthInfo.getProvider())) {
+            return youTubeOAuthService.getValidOAuthInfo(oauthInfo);
+        }
+
+
+        throw new SocialRavenException("No Provider found for OAuthInfo", HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

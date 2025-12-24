@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.post.video;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -44,7 +45,7 @@ public class YoutubeVideoPostPublisherService {
      */
     public String postVideoToYoutube(PostEntity post,
                                      List<PostMediaEntity> mediaFiles,
-                                     OAuthInfoEntity authInfo) {
+                                     OAuthInfoEntity authInfo, PostCollectionEntity postCollection) {
         try {
             log.info("=== YouTube Video Post Started ===");
             log.info("PostID: {}, YouTubeChannelID: {}", post.getId(), authInfo.getProviderUserId());
@@ -78,7 +79,7 @@ public class YoutubeVideoPostPublisherService {
 
             // Step 2: Initialize resumable upload and get upload URL
             log.info("Step 2: Initializing resumable upload...");
-            String uploadUrl = initializeResumableUpload(post, videoMedia, accessToken, videoBytes.length);
+            String uploadUrl = initializeResumableUpload(post, videoMedia, accessToken, videoBytes.length, postCollection);
             log.info("Resumable upload initialized successfully");
             log.debug("Upload URL obtained: {}", uploadUrl.substring(0, Math.min(50, uploadUrl.length())) + "...");
 
@@ -147,15 +148,15 @@ public class YoutubeVideoPostPublisherService {
      * Returns the upload URL for chunked uploading
      */
     private String initializeResumableUpload(PostEntity post,
-                                            PostMediaEntity videoMedia,
-                                            String accessToken,
-                                            long videoSize) {
+                                             PostMediaEntity videoMedia,
+                                             String accessToken,
+                                             long videoSize, PostCollectionEntity postCollection) {
         try {
             log.info("Initializing resumable upload session...");
             log.debug("Video size: {} bytes", videoSize);
 
             // Build video metadata
-            Map<String, Object> snippet = buildVideoSnippet(post);
+            Map<String, Object> snippet = buildVideoSnippet(post, postCollection);
             Map<String, Object> status = buildVideoStatus(post);
 
             Map<String, Object> metadata = new LinkedHashMap<>();
@@ -453,14 +454,14 @@ public class YoutubeVideoPostPublisherService {
     /**
      * Build video snippet (title, description, tags, etc.)
      */
-    private Map<String, Object> buildVideoSnippet(PostEntity post) {
+    private Map<String, Object> buildVideoSnippet(PostEntity post, PostCollectionEntity postCollection) {
         log.debug("Building video snippet...");
 
         Map<String, Object> snippet = new LinkedHashMap<>();
         
         // Title (required)
-        String title = post.getTitle() != null && !post.getTitle().isEmpty() 
-                ? post.getTitle() 
+        String title = postCollection.getTitle() != null && !postCollection.getTitle().isEmpty()
+                ? postCollection.getTitle()
                 : "Video Upload";
         
         if (title.length() > 100) {
@@ -471,7 +472,7 @@ public class YoutubeVideoPostPublisherService {
         log.debug("Video title: {}", title);
 
         // Description (optional)
-        String description = post.getDescription() != null ? post.getDescription() : "";
+        String description = postCollection.getDescription() != null ? postCollection.getDescription() : "";
         if (description.length() > 5000) {
             log.warn("Description exceeds 5000 characters, truncating");
             description = description.substring(0, 4997) + "...";

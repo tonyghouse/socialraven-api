@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.post.video;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.service.provider.XOAuthService;
@@ -55,7 +56,7 @@ public class XVideoPostPublisherService {
 
     public void postVideosToX(PostEntity post,
                               List<PostMediaEntity> mediaFiles,
-                              OAuthInfoEntity authInfo) {
+                              OAuthInfoEntity authInfo, PostCollectionEntity postCollection) {
         try {
             // Step 0: Validate inputs
             if (mediaFiles == null || mediaFiles.isEmpty()) {
@@ -98,7 +99,7 @@ public class XVideoPostPublisherService {
 
             // Step 3: Create tweet with video
             log.info("Creating tweet with video...");
-            createTweetWithVideo(post, mediaId, accessToken, tokenSecret);
+            createTweetWithVideo(post, mediaId, accessToken, tokenSecret, postCollection);
 
             log.info("=== X Video Post Success ===");
             log.info("PostID: {}", post.getId());
@@ -482,15 +483,15 @@ public class XVideoPostPublisherService {
     /**
      * Create tweet with video using Twitter API v2
      */
-    private void createTweetWithVideo(PostEntity post, 
-                                     String mediaId, 
-                                     String accessToken, 
-                                     String tokenSecret) {
+    private void createTweetWithVideo(PostEntity post,
+                                      String mediaId,
+                                      String accessToken,
+                                      String tokenSecret, PostCollectionEntity postCollection) {
         try {
             log.info("Creating tweet with video");
 
             // Build tweet text
-            String tweetText = buildTweetText(post);
+            String tweetText = buildTweetText(post, postCollection);
 
             // Build request body for API v2
             Map<String, Object> body = new LinkedHashMap<>();
@@ -572,8 +573,8 @@ public class XVideoPostPublisherService {
     /**
      * Build tweet text with character limit handling
      */
-    private String buildTweetText(PostEntity post) {
-        String text = post.getDescription() != null ? post.getDescription() : "";
+    private String buildTweetText(PostEntity post, PostCollectionEntity postCollection) {
+        String text = postCollection.getDescription() != null ? postCollection.getDescription() : "";
         
         if (text.length() > 280) {
             log.warn("Tweet text exceeds 280 characters, truncating...");

@@ -3,12 +3,14 @@ package com.ghouse.socialraven.consumer;
 import com.ghouse.socialraven.service.post.PostPublisherService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
 @Slf4j
 public class PostScheduleConsumer {
 
+    public final static String POST_PUBLISH_QUEUE = "post-publish-queue-local";
     private final PostPublisherService postPublisherService;
 
     public PostScheduleConsumer(PostPublisherService postPublisherService) {
@@ -19,7 +21,7 @@ public class PostScheduleConsumer {
      * Consumes messages from RabbitMQ queue: post-publish-queue
      */
     @RabbitListener(
-            queues = "post-publish-queue",
+            queues = POST_PUBLISH_QUEUE,
             containerFactory = "rabbitListenerContainerFactory"
     )
     public void schedulePosts(String postId) {

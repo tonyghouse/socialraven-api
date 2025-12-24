@@ -18,10 +18,10 @@ public class OAuthRefreshConsumer {
     /**
      * Consumes messages from RabbitMQ queue: oauth-refresh-queue
      */
-    @RabbitListener(
-            queues = "oauth-refresh-queue",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
+//    @RabbitListener(
+//            queues = "oauth-refresh-queue",
+//            containerFactory = "rabbitListenerContainerFactory"
+//    )
     public void refreshOAuths(String oauthInfoId) {
         try {
             Long id = Long.valueOf(oauthInfoId);

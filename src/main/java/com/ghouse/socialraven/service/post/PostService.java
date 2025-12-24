@@ -1,23 +1,26 @@
 package com.ghouse.socialraven.service.post;
 
-import com.ghouse.socialraven.constant.Platform;
+import com.ghouse.socialraven.constant.PostCollectionStatus;
+import com.ghouse.socialraven.constant.PostCollectionType;
 import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.MediaResponse;
+import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostMedia;
 import com.ghouse.socialraven.dto.PostResponse;
-import com.ghouse.socialraven.dto.SchedulePost;
-import com.ghouse.socialraven.entity.PostMediaEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
+import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.helper.PostPoolHelper;
+import com.ghouse.socialraven.mapper.PostTypeMapper;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
+import com.ghouse.socialraven.repo.PostCollectionRepo;
 import com.ghouse.socialraven.repo.PostMediaRepo;
 import com.ghouse.socialraven.repo.PostRepo;
 import com.ghouse.socialraven.service.account_profile.AccountProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
-
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -25,7 +28,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -34,6 +36,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -42,6 +45,9 @@ import redis.clients.jedis.JedisPool;
 @Service
 @Slf4j
 public class PostService {
+
+    @Autowired
+    private PostCollectionRepo postCollectionRepo;
 
     @Autowired
     private PostRepo postRepo;
@@ -59,30 +65,29 @@ public class PostService {
     private JedisPool jedisPool;
 
 
-    public SchedulePost schedulePost(SchedulePost schedulePost) {
-        List<ConnectedAccount> connectedAccounts = schedulePost.getConnectedAccounts();
+    @Transactional
+    public PostCollection schedulePostCollection(PostCollection postCollectionReq) {
+        List<ConnectedAccount> connectedAccounts = postCollectionReq.getConnectedAccounts();
         if (CollectionUtils.isEmpty(connectedAccounts)) {
-            throw new RuntimeException("Select connected accounts");
+            throw new RuntimeException("Select connected accounts for post collection");
         }
 
-        PostEntity post = new PostEntity();
+        PostCollectionEntity postCollection = new PostCollectionEntity();
 
-        post.setPostStatus(PostStatus.SCHEDULED);
-        post.setPostType(schedulePost.getPostType());
+
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        post.setUserId(userId);
-        post.setTitle(schedulePost.getTitle());
-        post.setDescription(schedulePost.getDescription());
-        //Single provider
-        Platform platform = connectedAccounts.stream().findFirst().get().getPlatform();
-        List<String> providerIds = connectedAccounts.stream().map(x -> x.getProviderUserId()).distinct().toList();
-        post.setProviderUserIds(providerIds);
+        postCollection.setPostCollectionStatus(PostCollectionStatus.SCHEDULED);
+        PostCollectionType postType = postCollectionReq.getPostType();
+        postCollection.setPostCollectionType(postType);
+        postCollection.setUserId(userId);
+        postCollection.setTitle(postCollectionReq.getTitle());
+        postCollection.setDescription(postCollectionReq.getDescription());
+        OffsetDateTime scheduledTime = postCollectionReq.getScheduledTime();
+        postCollection.setScheduledTime(scheduledTime);
 
-        post.setScheduledTime(schedulePost.getScheduledTime());
 
-
-        List<PostMedia> media = schedulePost.getMedia() != null ? schedulePost.getMedia() : Collections.emptyList();
-        List<PostMediaEntity> postMediaEntityList = new ArrayList<>();
+        List<PostMedia> media = postCollectionReq.getMedia() != null ? postCollectionReq.getMedia() : Collections.emptyList();
+        List<PostMediaEntity> postMediaEntities = new ArrayList<>();
         for (var postMediaDto : media) {
             PostMediaEntity postMediaEntity = new PostMediaEntity();
             postMediaEntity.setFileUrl(postMediaDto.getFileUrl());
@@ -90,26 +95,39 @@ public class PostService {
             postMediaEntity.setSize(postMediaDto.getSize());
             postMediaEntity.setFileName(postMediaDto.getFileName());
             postMediaEntity.setMimeType(postMediaDto.getMimeType());
-            postMediaEntity.setPost(post);
-            postMediaEntityList.add(postMediaEntity);
+            postMediaEntity.setPostCollection(postCollection);
+            postMediaEntities.add(postMediaEntity);
         }
+        postCollection.setMediaFiles(postMediaEntities);
 
-        post.setMediaFiles(postMediaEntityList);
+        List<PostEntity> postEntities = new ArrayList<>();
+        for (ConnectedAccount connectedAccount : connectedAccounts) {
+            PostEntity post = new PostEntity();
+            post.setProvider(ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()));
+            post.setProviderUserId(connectedAccount.getProviderUserId());
+            post.setPostCollection(postCollection);
+            post.setPostStatus(PostStatus.SCHEDULED);
+            post.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
+            post.setScheduledTime(scheduledTime);
+            postEntities.add(post);
+        }
+        postCollection.setPosts(postEntities);
 
-
-        PostEntity savedPost = postRepo.save(post);
+        PostCollectionEntity savedPost = postCollectionRepo.save(postCollection);
         Long postId = savedPost.getId();
 
-        // ---------------- REDIS SCHEDULING ------------------
-        OffsetDateTime scheduleTime = savedPost.getScheduledTime();
-        long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
+        List<PostEntity> posts = savedPost.getPosts();
+        for (PostEntity post : posts) {
+            OffsetDateTime scheduleTime = post.getScheduledTime();
+            long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
 
-        try (Jedis jedis = jedisPool.getResource()) {
-            jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, postId.toString());
-            log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", postId, scheduleTime);
+            try (Jedis jedis = jedisPool.getResource()) {
+                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, postId.toString());
+                log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", postId, scheduleTime);
+            }
         }
 
-        return schedulePost;
+        return postCollectionReq;
     }
 
 
@@ -129,22 +147,15 @@ public class PostService {
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
 
-        Page<PostEntity> postsPage = postRepo
-                .findByUserIdAndPostStatusOrderByScheduledTimeDesc(userId, postStatus, pageable);
+        Page<PostEntity> postsPage = postRepo.findByPostCollectionUserIdAndPostStatus(userId, postStatus, pageable);
         return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
     }
 
     private PostResponse getPostResponse(PostEntity post, Map<String, ConnectedAccount> connectedAccountMap) {
+        PostCollectionEntity postCollection = post.getPostCollection();
 
-        List<String> providerUserIds = post.getProviderUserIds();
-        List<ConnectedAccount> connectedAccounts = new ArrayList<>();
-        for (String providerUserId : providerUserIds) {
-            ConnectedAccount connectedAccount = connectedAccountMap.get(providerUserId);
-            if (connectedAccount != null) {
-                connectedAccounts.add(connectedAccount);
-            }
-        }
-        List<PostMediaEntity> mediaList = post.getMediaFiles();
+        ConnectedAccount connectedAccount = connectedAccountMap.get(post.getProviderUserId());
+        List<PostMediaEntity> mediaList = postCollection.getMediaFiles();
 
 
         List<MediaResponse> mediaDtos =
@@ -161,12 +172,14 @@ public class PostService {
 
         return new PostResponse(
                 post.getId(),
-                post.getTitle(),
-                post.getDescription(),
+                postCollection.getId(),
+                connectedAccount!=null? ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()) : null,
+                postCollection.getTitle(),
+                postCollection.getDescription(),
                 post.getPostStatus().toString(),
                 post.getScheduledTime(),
                 mediaDtos,
-                connectedAccounts
+                connectedAccount
         );
     }
 
@@ -177,11 +190,8 @@ public class PostService {
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
-        Page<PostEntity> postsPage = postRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
-
-        return postsPage.map(post -> {
-            return getPostResponse(post, connectedAccountMap);
-        });
+        Page<PostEntity> postsPage = postRepo.findByPostCollectionUserId(userId, pageable);
+        return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
     }
 
     public PostResponse getPostById(String userId, Long postId) {
@@ -205,7 +215,7 @@ public class PostService {
 
         }
 
-        postRepo.deleteById(postId);
+        postCollectionRepo.deleteById(postId);
     }
 
 }

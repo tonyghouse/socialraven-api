@@ -3,6 +3,7 @@ package com.ghouse.socialraven.service.post.image;
 import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
@@ -36,19 +37,17 @@ public class ImagePostPublisherService {
 
     public void publishPost(PostEntity post) {
         try{
-            String userId = post.getUserId();
-            log.info("Publishing Image(s) post, title:{} for userId: {} ", post.getTitle(), userId);
-            List<String> providerUserIds = post.getProviderUserIds();
+            PostCollectionEntity postCollection  = post.getPostCollection();
+            String userId = postCollection.getUserId();
+            log.info("Publishing Image(s) post, title:{} for userId: {} ", postCollection.getTitle(), userId);
 
-            List<OAuthInfoEntity> oauthInfos = oAuthInfoService.getOAuthInfos(userId, providerUserIds);
-            List<PostMediaEntity> mediaFiles = post.getMediaFiles();
-            for(var authInfo : oauthInfos){
-                if(Provider.LINKEDIN.equals(authInfo.getProvider())){
-                    linkedInImagePostPublisherService.postImagesToLinkedin(post, mediaFiles, authInfo);
-                }
-                if(Provider.X.equals(authInfo.getProvider())){
-                    xImagePostPublisherService.postImagesToX(post,mediaFiles, authInfo);
-                }
+            OAuthInfoEntity authInfo = oAuthInfoService.getOAuthInfo(userId, post.getProviderUserId());
+            List<PostMediaEntity> mediaFiles = postCollection.getMediaFiles();
+            if (Provider.LINKEDIN.equals(authInfo.getProvider())) {
+                linkedInImagePostPublisherService.postImagesToLinkedin(post, mediaFiles, authInfo, postCollection);
+            }
+            if (Provider.X.equals(authInfo.getProvider())) {
+                xImagePostPublisherService.postImagesToX(post, mediaFiles, authInfo, postCollection);
             }
 
 

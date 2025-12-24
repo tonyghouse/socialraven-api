@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.post.image;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
 import com.ghouse.socialraven.service.provider.XOAuthService;
@@ -53,7 +54,7 @@ public class XImagePostPublisherService {
 
     public void postImagesToX(PostEntity post,
                               List<PostMediaEntity> mediaFiles,
-                              OAuthInfoEntity authInfo) {
+                              OAuthInfoEntity authInfo, PostCollectionEntity postCollectionEntity) {
         try {
             // Step 0: Validate inputs
             if (mediaFiles == null || mediaFiles.isEmpty()) {
@@ -115,7 +116,7 @@ public class XImagePostPublisherService {
 
             // Step 4: Create tweet with all uploaded images
             log.info("All {} images uploaded successfully. Creating tweet...", mediaIds.size());
-            createTweetWithMedia(post, mediaIds, accessToken, tokenSecret);
+            createTweetWithMedia(post, mediaIds, accessToken, tokenSecret, postCollectionEntity);
 
             log.info("=== X Image Post Success ===");
             log.info("PostID: {}, ImagesPosted: {}", post.getId(), mediaIds.size());
@@ -211,10 +212,10 @@ public class XImagePostPublisherService {
      * STEP 2: Create tweet with media using Twitter API v2
      * Note: Twitter API v2 also uses OAuth 1.0a for authentication
      */
-    private void createTweetWithMedia(PostEntity post, 
-                                     List<String> mediaIds, 
-                                     String accessToken, 
-                                     String tokenSecret) {
+    private void createTweetWithMedia(PostEntity post,
+                                      List<String> mediaIds,
+                                      String accessToken,
+                                      String tokenSecret, PostCollectionEntity postCollectionEntity) {
         try {
             if (mediaIds == null || mediaIds.isEmpty()) {
                 throw new RuntimeException("Cannot create tweet without media IDs");
@@ -223,7 +224,7 @@ public class XImagePostPublisherService {
             log.info("Creating tweet with {} images", mediaIds.size());
 
             // Build tweet text (Twitter has 280 character limit)
-            String tweetText = buildTweetText(post);
+            String tweetText = buildTweetText(post, postCollectionEntity);
 
             // Build request body for API v2
             Map<String, Object> body = new LinkedHashMap<>();
@@ -289,8 +290,8 @@ public class XImagePostPublisherService {
     /**
      * Build tweet text with character limit handling
      */
-    private String buildTweetText(PostEntity post) {
-        String text = post.getDescription() != null ? post.getDescription() : "";
+    private String buildTweetText(PostEntity post, PostCollectionEntity postCollection) {
+        String text = postCollection.getDescription() != null ? postCollection.getDescription() : "";
         
         // Twitter character limit is 280
         if (text.length() > 280) {

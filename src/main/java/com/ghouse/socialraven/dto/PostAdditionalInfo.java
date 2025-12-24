@@ -1,24 +1,24 @@
 package com.ghouse.socialraven.dto;
 
-import com.ghouse.socialraven.constant.PostType;
+import com.ghouse.socialraven.constant.PostCollectionType;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
 import java.util.List;
 
 @Data
-public class SchedulePost {
+public class PostAdditionalInfo {
 
     private String title;
 
     private String description;
 
-    private PostType postType;
+    private PostCollectionType postType;
 
     // Supports multiple files
     private List<PostMedia> media;
 
     private List<ConnectedAccount> connectedAccounts;
 
-    private OffsetDateTime scheduledTime; // stored in UTC in backend
+    private OffsetDateTime scheduledTime;
 }

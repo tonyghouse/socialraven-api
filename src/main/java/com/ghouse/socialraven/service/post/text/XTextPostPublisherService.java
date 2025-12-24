@@ -2,9 +2,10 @@ package com.ghouse.socialraven.service.post.text;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.entity.OAuthInfoEntity;
+import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
-import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.repo.PostCollectionRepo;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +31,7 @@ import java.util.stream.Collectors;
 public class XTextPostPublisherService {
 
     @Autowired
-    private PostRepo postRepo;
+    private PostCollectionRepo postRepo;
 
     @Autowired
     private RestTemplate rest;
@@ -53,7 +54,7 @@ public class XTextPostPublisherService {
     // Twitter API v2 endpoint for creating tweets
     private static final String CREATE_TWEET_URL = "https://api.twitter.com/2/tweets";
 
-    public void postTextToX(PostEntity post, OAuthInfoEntity authInfo) {
+    public void postTextToX(PostEntity post, OAuthInfoEntity authInfo, PostCollectionEntity postCollection) {
         try {
             // Get valid OAuth info with token secret
             OAuthInfoEntity validOAuthInfo = xOAuthService.getValidOAuthInfo(authInfo);
@@ -66,7 +67,7 @@ public class XTextPostPublisherService {
 
 
             // Build tweet text with character limit handling
-            String tweetText = buildTweetText(post);
+            String tweetText = buildTweetText(post, postCollection);
 
             // Build request body for Twitter API v2
             Map<String, Object> body = new HashMap<>();
@@ -130,8 +131,8 @@ public class XTextPostPublisherService {
      * Build tweet text with character limit handling
      * Twitter has a 280 character limit
      */
-    private String buildTweetText(PostEntity post) {
-        String text = post.getDescription() != null ? post.getDescription() : "";
+    private String buildTweetText(PostEntity post, PostCollectionEntity postCollection) {
+        String text = postCollection.getDescription() != null ? postCollection.getDescription() : "";
         
         // Twitter character limit is 280
         if (text.length() > 280) {

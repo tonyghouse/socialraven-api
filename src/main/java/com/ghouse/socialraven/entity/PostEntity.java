@@ -2,48 +2,55 @@ package com.ghouse.socialraven.entity;
 
 import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.constant.PostType;
+import com.ghouse.socialraven.constant.Provider;
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
-import java.util.List;
 
-@Data
 @Entity
-@Table(name = "general_post")
+@Table(name = "post")
+@Data
 public class PostEntity {
 
     @Id
-    @GeneratedValue
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @Enumerated(EnumType.STRING)
-    @Column(length = 50, nullable = false)
-    private PostType postType;
+    @Column(nullable = false, length = 50)
+    private Provider provider;
+
+    @Column(length = 1000, nullable = false)
+    private String providerUserId;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50, nullable = false)
     private PostStatus postStatus;
 
-    @Column(nullable = false)
-    private String userId;
-
-    @Column(name = "provider_user_ids", columnDefinition = "text[]")
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    private List<String> providerUserIds;
-
-
-    @Column(length = 1000, nullable = false)
-    private String title;
-
-    @Column(length = 100000, nullable = false)
-    private String description;
-
-    @OneToMany(mappedBy = "post", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<PostMediaEntity> mediaFiles;
+    @Enumerated(EnumType.STRING)
+    @Column(length = 50, nullable = false)
+    private PostType postType;
 
     private OffsetDateTime scheduledTime;
 
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "post_collection_id", nullable = false)
+    private PostCollectionEntity postCollection;
+
+    private OffsetDateTime createdAt;
+    private OffsetDateTime updatedAt;
+
+    @PrePersist
+    void onCreate() {
+        createdAt = OffsetDateTime.now();
+        updatedAt = createdAt;
+    }
+
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = OffsetDateTime.now();
+    }
 }
+

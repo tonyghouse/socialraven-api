@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.repo.PostCollectionRepo;
 import com.ghouse.socialraven.service.provider.InstagramOAuthService;
 import com.ghouse.socialraven.service.provider.XOAuthService;
 import com.ghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -60,7 +60,7 @@ public class AccountProfileService {
 
 
     @Autowired
-    private PostRepo postRepo;
+    private PostCollectionRepo postRepo;
 
 
     public List<ConnectedAccount> getConnectedAccounts(String userId, @Nonnull Platform platform) {

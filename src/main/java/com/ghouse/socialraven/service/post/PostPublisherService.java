@@ -11,8 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
 @Service
 @Slf4j
 public class PostPublisherService {
@@ -31,24 +29,17 @@ public class PostPublisherService {
 
 
     public void publishPost(Long postId) {
-        log.info("Publishing post: {}", postId);
-        PostEntity post = postRepo.findByIdWithMedia(postId);
+        log.info("Request to publish post: {}", postId);
+        PostEntity post = postRepo.findPostWithCollectionAndMedia(postId);
         if (post != null) {
+            log.info("Publishing post: "+ postId);
             publishPost(post);
+        } else{
+            log.info("Post not found: "+ postId);
         }
 
     }
 
-    public void publishPosts(List<Long> postIds) {
-        for (Long postId : postIds) {
-            log.info("Publishing post: {}", postId);
-            PostEntity post = postRepo.findByIdWithMedia(postId);
-            if (post !=null) {
-                publishPost(post);
-            }
-        }
-
-    }
 
     private void publishPost(PostEntity post) {
         try {
@@ -60,7 +51,7 @@ public class PostPublisherService {
                 textPostPublisherService.publishPost(post);
             }
         } catch (Exception exp) {
-            log.error("Failed to post postID:{}, postTitle: {}: ", post.getId(), post.getTitle(), exp);
+            log.error("Failed to post postID:{}, postTitle: {}: ", post.getId(), post.getPostCollection().getTitle(), exp);
             post.setPostStatus(PostStatus.FAILED);
             postRepo.save(post);
         }

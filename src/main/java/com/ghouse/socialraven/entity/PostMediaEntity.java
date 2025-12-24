@@ -29,7 +29,7 @@ public class PostMediaEntity {
     private Long size;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "post_id", nullable = false)
-    private PostEntity post;
+    @JoinColumn(name = "post_collection_id", nullable = false)
+    private PostCollectionEntity postCollection;
 
 }
