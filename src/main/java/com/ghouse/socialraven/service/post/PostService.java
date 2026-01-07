@@ -215,7 +215,7 @@ public class PostService {
 
         }
 
-        postCollectionRepo.deleteById(postId);
+        postRepo.deleteById(postId);
     }
 
 }
