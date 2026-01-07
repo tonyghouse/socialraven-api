@@ -31,7 +31,7 @@ public class RabbitPublisher {
                 String prodQueue = "post-publish-queue";
                 channel.queueBind(prodQueue, exchange, routingKey);
             } else {
-                String localQueue = "post-publish-queue-local";
+                String localQueue = "post-publish-queue";
                 channel.queueDeclare(localQueue, true, false, false, null);
                 channel.queueBind(localQueue, exchange, routingKey);
             }
