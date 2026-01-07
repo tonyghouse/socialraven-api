@@ -114,7 +114,6 @@ public class PostService {
         postCollection.setPosts(postEntities);
 
         PostCollectionEntity savedPost = postCollectionRepo.save(postCollection);
-        Long postId = savedPost.getId();
 
         List<PostEntity> posts = savedPost.getPosts();
         for (PostEntity post : posts) {
@@ -122,8 +121,8 @@ public class PostService {
             long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
 
             try (Jedis jedis = jedisPool.getResource()) {
-                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, postId.toString());
-                log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", postId, scheduleTime);
+                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
+                log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduleTime);
             }
         }
 
