@@ -30,7 +30,7 @@ public class PostPublishScheduler {
     /**
      * Runs every 5 minutes
      */
-    @Scheduled(cron = "0 */1 * * * ?", zone = "UTC")
+    @Scheduled(cron = "0 */5 * * * ?", zone = "UTC")
     public void publishPosts() {
 
         log.info("[PostScheduler] Running scheduled job");
