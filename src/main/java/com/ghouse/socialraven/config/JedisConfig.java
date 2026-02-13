@@ -16,18 +16,28 @@ public class JedisConfig {
 
     @Bean
     public JedisPool jedisPool() {
-        if (redisUrl != null && !redisUrl.isEmpty()) {
 
-            // Format: redis://default:password@host:port
-            URI uri = URI.create(redisUrl);
+        if (redisUrl == null || redisUrl.isEmpty()) {
+            throw new IllegalStateException("redis.public.url not set");
+        }
 
-            String host = uri.getHost();
-            int port = uri.getPort();
-            String password = uri.getUserInfo().split(":", 2)[1];
-            String username = uri.getUserInfo().split(":", 2)[0];
+        URI uri = URI.create(redisUrl);
+
+        String host = uri.getHost();
+        int port = uri.getPort() == -1 ? 6379 : uri.getPort();
+
+        JedisPoolConfig poolConfig = new JedisPoolConfig();
+        poolConfig.setMaxTotal(10);
+        poolConfig.setMaxIdle(5);
+        poolConfig.setMinIdle(1);
+
+        if (uri.getUserInfo() != null) {
+            String[] userInfoParts = uri.getUserInfo().split(":", 2);
+            String username = userInfoParts.length > 1 ? userInfoParts[0] : null;
+            String password = userInfoParts.length > 1 ? userInfoParts[1] : userInfoParts[0];
 
             return new JedisPool(
-                    new JedisPoolConfig(),
+                    poolConfig,
                     host,
                     port,
                     2000,
@@ -37,6 +47,11 @@ public class JedisConfig {
             );
         }
 
-        throw new IllegalStateException("REDIS_URL not set");
+        // No authentication
+        return new JedisPool(
+                poolConfig,
+                host,
+                port
+        );
     }
 }
