@@ -20,9 +20,9 @@ public class StorageService {
     private S3Presigner s3Presigner;
 
     @Autowired
-    private S3Client s3Client; // Add S3Client for direct downloads
+    private S3Client s3Client;
 
-    @Value("${tigris.s3.bucket}")
+    @Value("${aws.s3.bucket}")
     private String bucket;
 
     /**

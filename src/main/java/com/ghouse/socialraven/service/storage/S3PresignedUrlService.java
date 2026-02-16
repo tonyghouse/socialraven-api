@@ -15,7 +15,7 @@ import java.time.Duration;
 @Slf4j
 public class S3PresignedUrlService {
 
-    @Value("${tigris.s3.bucket}")
+    @Value("${aws.s3.bucket}")
     private String bucketName;
 
     @Autowired
