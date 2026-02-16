@@ -90,7 +90,6 @@ public class PostService {
         List<PostMediaEntity> postMediaEntities = new ArrayList<>();
         for (var postMediaDto : media) {
             PostMediaEntity postMediaEntity = new PostMediaEntity();
-            postMediaEntity.setFileUrl(postMediaDto.getFileUrl());
             postMediaEntity.setFileKey(postMediaDto.getFileKey());
             postMediaEntity.setSize(postMediaDto.getSize());
             postMediaEntity.setFileName(postMediaDto.getFileName());

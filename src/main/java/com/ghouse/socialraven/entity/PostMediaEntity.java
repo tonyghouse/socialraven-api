@@ -20,9 +20,6 @@ public class PostMediaEntity {
     private String mimeType;
 
     @Column(nullable = false)
-    private String fileUrl;
-
-    @Column(nullable = false)
     private String fileKey;
 
     @Column(nullable = false)
