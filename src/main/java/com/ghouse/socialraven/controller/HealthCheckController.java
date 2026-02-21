@@ -17,14 +17,9 @@ public class HealthCheckController {
 		return new ResponseEntity<>("SocialRaven API Home: " + ZonedDateTime.now(), HttpStatus.OK);
 	}
 
-	@GetMapping(value="/health", produces = "application/json")
+	@GetMapping(value="/public/health", produces = "application/json")
 	public ResponseEntity<String> checkHealth() {
 		return new ResponseEntity<>("SocialRaven API Healthy: " + ZonedDateTime.now(), HttpStatus.OK);
-	}
-
-	@GetMapping(value="/liveness", produces = "application/json")
-	public ResponseEntity<String> checkLiveness() {
-		return new ResponseEntity<>("SocialRaven API is Live: " + ZonedDateTime.now(), HttpStatus.OK);
 	}
 
 }
