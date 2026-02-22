@@ -16,6 +16,9 @@ public class ClerkAuthHelper {
     @Value("${socialraven.clerk.secret}")
     private String clerkSecretKey;
 
+    @Value("${socialraven.clerk.authorized-party}")
+    private String authorizedParty;
+
 
     public SessionAuthObjectV2 authenticate(Map<String, List<String>> requestHeaders) {
 
@@ -23,6 +26,7 @@ public class ClerkAuthHelper {
                 requestHeaders,
                 AuthenticateRequestOptions
                         .secretKey(clerkSecretKey)
+                        .authorizedParties(List.of(authorizedParty))
                         .build()
         );
 
@@ -36,6 +40,7 @@ public class ClerkAuthHelper {
     public boolean isSignedIn(Map<String, List<String>> requestHeaders) {
         RequestState requestState = AuthenticateRequest.authenticateRequest(requestHeaders, AuthenticateRequestOptions
                 .secretKey(clerkSecretKey)
+                .authorizedParties(List.of(authorizedParty))
                 .build());
         if (!requestState.isSignedIn()) {
             return false;
