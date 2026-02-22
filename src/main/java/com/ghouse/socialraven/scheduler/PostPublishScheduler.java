@@ -16,33 +16,33 @@ public class PostPublishScheduler {
     private static final Logger log =
             LoggerFactory.getLogger(PostPublishScheduler.class);
 
-    private final RabbitPublisher rabbitPublisher;
+    private final MessagePublisher messagePublisher;
     private final PostRedisService postRedisService;
 
     public PostPublishScheduler(
-            RabbitPublisher rabbitPublisher,
+            MessagePublisher messagePublisher,
             PostRedisService postRedisService
     ) {
-        this.rabbitPublisher = rabbitPublisher;
+        this.messagePublisher = messagePublisher;
         this.postRedisService = postRedisService;
     }
 
     /**
-     * Runs every 5 minutes
+     * Runs every 3 minutes
      */
-    @Scheduled(cron = "0 */5 * * * ?", zone = "UTC")
+    @Scheduled(cron = "0 */3 * * * ?", zone = "UTC")
     public void publishPosts() {
 
         log.info("[PostScheduler] Running scheduled job");
 
         String redisKey = getPostsPoolName();
 
-        long next5Min = Instant.now()
-                .plus(5, ChronoUnit.MINUTES)
+        long next3Min = Instant.now()
+                .plus(3, ChronoUnit.MINUTES)
                 .toEpochMilli();
 
         List<Long> postIds =
-                postRedisService.fetchIds(redisKey, next5Min);
+                postRedisService.fetchIds(redisKey, next3Min);
 
         if (postIds.isEmpty()) {
             log.info("[PostScheduler] No posts to publish.");
@@ -56,7 +56,7 @@ public class PostPublishScheduler {
                 BatchUtil.partition(postIds, 1000);
 
         for (List<Long> postIdsBatch : postIdsBatches) {
-            rabbitPublisher.publishPostIds(postIdsBatch);
+            messagePublisher.publishPostIds(postIdsBatch);
         }
 
         log.info("[PostScheduler] Picked & queued posts: {}", postIds);

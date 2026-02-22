@@ -16,14 +16,14 @@ public class OAuthRefreshScheduler {
     private static final Logger log =
             LoggerFactory.getLogger(OAuthRefreshScheduler.class);
 
-    private final RabbitPublisher rabbitPublisher;
+    private final MessagePublisher messagePublisher;
     private final PostRedisService postRedisService;
 
     public OAuthRefreshScheduler(
-            RabbitPublisher rabbitPublisher,
+            MessagePublisher messagePublisher,
             PostRedisService postRedisService
     ) {
-        this.rabbitPublisher = rabbitPublisher;
+        this.messagePublisher = messagePublisher;
         this.postRedisService = postRedisService;
     }
 
@@ -53,7 +53,7 @@ public class OAuthRefreshScheduler {
                 BatchUtil.partition(oauthInfoIds, 1000);
 
         for (List<Long> oauthInfoIdsBatch : oauthInfoBatches) {
-            rabbitPublisher.refreshOAuthInfoIds(oauthInfoIdsBatch);
+            messagePublisher.refreshOAuthInfoIds(oauthInfoIdsBatch);
         }
 
         log.info(
