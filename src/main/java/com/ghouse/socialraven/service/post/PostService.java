@@ -231,15 +231,36 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
-    public Page<PostCollectionResponse> getUserPostCollections(String userId, int page) {
+    public PostCollectionResponse getPostCollectionById(String userId, Long id) {
+        PostCollectionEntity collection = postCollectionRepo.findById(id)
+                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
+                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
+        if (!collection.getUserId().equals(userId)) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+        return getPostCollectionResponse(collection, connectedAccountMap);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<PostCollectionResponse> getUserPostCollections(String userId, int page, String type) {
         Pageable pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
 
         List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
-        Page<PostCollectionEntity> collectionsPage =
-                postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
+        Page<PostCollectionEntity> collectionsPage;
+        if ("scheduled".equalsIgnoreCase(type)) {
+            collectionsPage = postCollectionRepo.findScheduledCollectionsByUserId(userId, pageable);
+        } else if ("published".equalsIgnoreCase(type)) {
+            collectionsPage = postCollectionRepo.findPublishedCollectionsByUserId(userId, pageable);
+        } else {
+            collectionsPage = postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
+        }
         return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap));
     }
 

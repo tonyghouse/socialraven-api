@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,17 +22,23 @@ public class PostCollectionController {
     @Autowired
     private PostService postService;
 
-    @PostMapping
-    @RequestMapping("/schedule")
+    @PostMapping("/schedule")
     public PostCollection schedulePost(@RequestBody PostCollection postCollection) {
         return postService.schedulePostCollection(postCollection);
     }
 
     @GetMapping
     public Page<PostCollectionResponse> getPostCollections(
-            @RequestParam(defaultValue = "0") int page) {
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(required = false) String type) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        return postService.getUserPostCollections(userId, page);
+        return postService.getUserPostCollections(userId, page, type);
+    }
+
+    @GetMapping("/{id}")
+    public PostCollectionResponse getPostCollectionById(@PathVariable Long id) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.getPostCollectionById(userId, id);
     }
 
 }
