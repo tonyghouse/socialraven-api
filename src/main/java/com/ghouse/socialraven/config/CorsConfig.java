@@ -17,7 +17,8 @@ public class CorsConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(List.of(
-                "https://www.socialraven.io"
+                "https://www.socialraven.io",
+                "http://localhost:3001"
         ));
 
         configuration.setAllowedMethods(List.of(

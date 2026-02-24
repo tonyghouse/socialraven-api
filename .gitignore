@@ -88,3 +88,5 @@ build/
 *.DS_Store
 
 application-local.properties
+
+.env.local

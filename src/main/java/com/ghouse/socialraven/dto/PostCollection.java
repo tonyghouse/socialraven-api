@@ -6,6 +6,7 @@ import lombok.Data;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class PostCollection {
@@ -22,4 +23,6 @@ public class PostCollection {
     private List<ConnectedAccount> connectedAccounts;
 
     private OffsetDateTime scheduledTime; // stored in UTC in backend
+
+    private Map<String, Object> platformConfigs;
 }

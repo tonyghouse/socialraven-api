@@ -4,9 +4,12 @@ import com.ghouse.socialraven.constant.PostCollectionStatus;
 import com.ghouse.socialraven.constant.PostCollectionType;
 import com.ghouse.socialraven.constant.PostStatus;
 import com.ghouse.socialraven.constant.Provider;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.MediaResponse;
 import com.ghouse.socialraven.dto.PostCollection;
+import com.ghouse.socialraven.dto.PostCollectionResponse;
 import com.ghouse.socialraven.dto.PostMedia;
 import com.ghouse.socialraven.dto.PostResponse;
 import com.ghouse.socialraven.entity.PostCollectionEntity;
@@ -64,6 +67,9 @@ public class PostService {
     @Autowired
     private JedisPool jedisPool;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
 
     @Transactional
     public PostCollection schedulePostCollection(PostCollection postCollectionReq) {
@@ -84,6 +90,14 @@ public class PostService {
         postCollection.setDescription(postCollectionReq.getDescription());
         OffsetDateTime scheduledTime = postCollectionReq.getScheduledTime();
         postCollection.setScheduledTime(scheduledTime);
+
+        if (postCollectionReq.getPlatformConfigs() != null) {
+            try {
+                postCollection.setPlatformConfigs(objectMapper.writeValueAsString(postCollectionReq.getPlatformConfigs()));
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException("Failed to serialize platformConfigs", e);
+            }
+        }
 
 
         List<PostMedia> media = postCollectionReq.getMedia() != null ? postCollectionReq.getMedia() : Collections.emptyList();
@@ -214,6 +228,66 @@ public class PostService {
         }
 
         postRepo.deleteById(postId);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<PostCollectionResponse> getUserPostCollections(String userId, int page) {
+        Pageable pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
+
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+
+        Page<PostCollectionEntity> collectionsPage =
+                postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
+        return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap));
+    }
+
+    private PostCollectionResponse getPostCollectionResponse(
+            PostCollectionEntity collection,
+            Map<String, ConnectedAccount> connectedAccountMap) {
+
+        List<PostEntity> posts = collection.getPosts();
+
+        List<MediaResponse> mediaDtos = collection.getMediaFiles() != null
+                ? collection.getMediaFiles().stream()
+                        .map(m -> new MediaResponse(
+                                m.getId(),
+                                m.getFileName(),
+                                m.getMimeType(),
+                                m.getSize(),
+                                storageService.generatePresignedGetUrl(m.getFileKey(), Duration.ofMinutes(10)),
+                                m.getFileKey()
+                        )).toList()
+                : List.of();
+
+        List<PostResponse> postDtos = posts != null
+                ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap)).toList()
+                : List.of();
+
+        return new PostCollectionResponse(
+                collection.getId(),
+                collection.getTitle(),
+                collection.getDescription(),
+                collection.getScheduledTime(),
+                collection.getPostCollectionType().name(),
+                deriveOverallStatus(posts),
+                postDtos,
+                mediaDtos
+        );
+    }
+
+    private String deriveOverallStatus(List<PostEntity> posts) {
+        if (posts == null || posts.isEmpty()) return "SCHEDULED";
+        long total = posts.size();
+        long scheduled = posts.stream().filter(p -> p.getPostStatus() == PostStatus.SCHEDULED).count();
+        long posted = posts.stream().filter(p -> p.getPostStatus() == PostStatus.POSTED).count();
+        long failed = posts.stream().filter(p -> p.getPostStatus() == PostStatus.FAILED).count();
+
+        if (scheduled == total) return "SCHEDULED";
+        if (posted == total) return "PUBLISHED";
+        if (failed == total) return "FAILED";
+        return "PARTIAL_SUCCESS";
     }
 
 }

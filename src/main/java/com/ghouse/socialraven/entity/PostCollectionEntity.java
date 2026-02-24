@@ -4,6 +4,8 @@ import com.ghouse.socialraven.constant.PostCollectionStatus;
 import com.ghouse.socialraven.constant.PostCollectionType;
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -49,4 +51,8 @@ public class PostCollectionEntity {
     private List<PostMediaEntity> mediaFiles;
 
     private OffsetDateTime scheduledTime;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String platformConfigs;
 }
