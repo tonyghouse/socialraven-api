@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/post-collections")
 public class PostCollectionController {
@@ -30,9 +32,11 @@ public class PostCollectionController {
     @GetMapping
     public Page<PostCollectionResponse> getPostCollections(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(required = false) String type) {
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<String> providerUserIds) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        return postService.getUserPostCollections(userId, page, type);
+        return postService.getUserPostCollections(userId, page, type, search, providerUserIds);
     }
 
     @GetMapping("/{id}")

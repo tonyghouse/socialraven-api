@@ -247,18 +247,46 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
-    public Page<PostCollectionResponse> getUserPostCollections(String userId, int page, String type) {
+    public Page<PostCollectionResponse> getUserPostCollections(
+            String userId, int page, String type, String search, List<String> providerUserIds) {
         Pageable pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
 
         List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
+        // Build LIKE pattern: lowercase %term%, or null when no search
+        String searchPattern = (search != null && !search.trim().isEmpty())
+                ? "%" + search.trim().toLowerCase() + "%"
+                : null;
+        boolean hasSearch = searchPattern != null;
+        boolean hasAccountFilter = !CollectionUtils.isEmpty(providerUserIds);
+
         Page<PostCollectionEntity> collectionsPage;
         if ("scheduled".equalsIgnoreCase(type)) {
-            collectionsPage = postCollectionRepo.findScheduledCollectionsByUserId(userId, pageable);
+            if (hasSearch || hasAccountFilter) {
+                if (hasAccountFilter) {
+                    collectionsPage = postCollectionRepo.searchScheduledCollectionsWithAccounts(
+                            userId, searchPattern, providerUserIds, pageable);
+                } else {
+                    collectionsPage = postCollectionRepo.searchScheduledCollections(
+                            userId, searchPattern, pageable);
+                }
+            } else {
+                collectionsPage = postCollectionRepo.findScheduledCollectionsByUserId(userId, pageable);
+            }
         } else if ("published".equalsIgnoreCase(type)) {
-            collectionsPage = postCollectionRepo.findPublishedCollectionsByUserId(userId, pageable);
+            if (hasSearch || hasAccountFilter) {
+                if (hasAccountFilter) {
+                    collectionsPage = postCollectionRepo.searchPublishedCollectionsWithAccounts(
+                            userId, searchPattern, providerUserIds, pageable);
+                } else {
+                    collectionsPage = postCollectionRepo.searchPublishedCollections(
+                            userId, searchPattern, pageable);
+                }
+            } else {
+                collectionsPage = postCollectionRepo.findPublishedCollectionsByUserId(userId, pageable);
+            }
         } else {
             collectionsPage = postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
         }
