@@ -1,6 +1,7 @@
 package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.constant.PostStatus;
+import com.ghouse.socialraven.dto.CalendarPostResponse;
 import com.ghouse.socialraven.dto.PostResponse;
 import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.service.post.PostService;
@@ -16,6 +17,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.OffsetDateTime;
+import java.util.List;
 
 @RestController
 @RequestMapping("/posts")
@@ -57,5 +61,15 @@ public class PostController {
         postService.deletePostById(userId, postId);
     }
 
+    @GetMapping("/calendar")
+    public List<CalendarPostResponse> getCalendarPosts(
+            @RequestParam String startDate,
+            @RequestParam String endDate,
+            @RequestParam(required = false) List<String> providerUserIds) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        OffsetDateTime start = OffsetDateTime.parse(startDate);
+        OffsetDateTime end = OffsetDateTime.parse(endDate);
+        return postService.getCalendarPosts(userId, start, end, providerUserIds);
+    }
 
 }

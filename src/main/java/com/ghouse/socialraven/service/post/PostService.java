@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.MediaResponse;
+import com.ghouse.socialraven.dto.CalendarPostResponse;
 import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostCollectionResponse;
 import com.ghouse.socialraven.dto.PostMedia;
@@ -296,6 +297,37 @@ public class PostService {
                 postDtos,
                 mediaDtos
         );
+    }
+
+    @Transactional(readOnly = true)
+    public List<CalendarPostResponse> getCalendarPosts(
+            String userId,
+            OffsetDateTime startTime,
+            OffsetDateTime endTime,
+            List<String> providerUserIds) {
+
+        List<PostEntity> posts;
+        if (CollectionUtils.isEmpty(providerUserIds)) {
+            posts = postRepo.findCalendarPosts(userId, startTime, endTime);
+        } else {
+            posts = postRepo.findCalendarPostsFiltered(userId, startTime, endTime, providerUserIds);
+        }
+
+        return posts.stream()
+                .map(p -> {
+                    PostCollectionEntity pc = p.getPostCollection();
+                    return new CalendarPostResponse(
+                            p.getId(),
+                            pc.getId(),
+                            pc.getTitle(),
+                            p.getProvider().name().toLowerCase(),
+                            p.getProviderUserId(),
+                            p.getPostStatus().name(),
+                            pc.getPostCollectionType().name(),
+                            p.getScheduledTime()
+                    );
+                })
+                .toList();
     }
 
     private String deriveOverallStatus(List<PostEntity> posts) {
