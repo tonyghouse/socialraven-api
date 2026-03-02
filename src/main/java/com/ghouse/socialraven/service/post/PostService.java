@@ -13,6 +13,7 @@ import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostCollectionResponse;
 import com.ghouse.socialraven.dto.PostMedia;
 import com.ghouse.socialraven.dto.PostResponse;
+import com.ghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
@@ -225,10 +226,74 @@ public class PostService {
     public void deletePostById(String userId, Long postId) {
         try (Jedis jedis = jedisPool.getResource()) {
             jedis.zrem(PostPoolHelper.getPostsPoolName(), postId.toString());
+        }
+        postRepo.deleteById(postId);
+    }
 
+    @Transactional
+    public void deletePostCollection(String userId, Long collectionId) {
+        PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
+                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
+        if (!collection.getUserId().equals(userId)) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        // Remove all contained posts from the Redis scheduling pool
+        List<PostEntity> posts = collection.getPosts();
+        if (posts != null && !posts.isEmpty()) {
+            try (Jedis jedis = jedisPool.getResource()) {
+                String[] postIds = posts.stream()
+                        .map(p -> p.getId().toString())
+                        .toArray(String[]::new);
+                jedis.zrem(PostPoolHelper.getPostsPoolName(), postIds);
+            }
+        }
+        postCollectionRepo.delete(collection);
+        log.info("Deleted post collection id={} for userId={}", collectionId, userId);
+    }
+
+    @Transactional
+    public PostCollectionResponse updatePostCollection(String userId, Long collectionId, UpdatePostCollectionRequest req) {
+        PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
+                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
+        if (!collection.getUserId().equals(userId)) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
         }
 
-        postRepo.deleteById(postId);
+        if (req.getTitle() != null) {
+            collection.setTitle(req.getTitle());
+        }
+        if (req.getDescription() != null) {
+            collection.setDescription(req.getDescription());
+        }
+        if (req.getScheduledTime() != null) {
+            OffsetDateTime newTime = req.getScheduledTime();
+            long newEpochMillis = newTime.toInstant().toEpochMilli();
+            collection.setScheduledTime(newTime);
+
+            // Re-schedule SCHEDULED posts in Redis with the new time
+            List<PostEntity> posts = collection.getPosts();
+            if (posts != null) {
+                try (Jedis jedis = jedisPool.getResource()) {
+                    for (PostEntity post : posts) {
+                        if (post.getPostStatus() == com.ghouse.socialraven.constant.PostStatus.SCHEDULED) {
+                            post.setScheduledTime(newTime);
+                            jedis.zadd(PostPoolHelper.getPostsPoolName(), newEpochMillis, post.getId().toString());
+                        }
+                    }
+                }
+            }
+        }
+
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+        return getPostCollectionResponse(saved, connectedAccountMap);
     }
 
     @Transactional(readOnly = true)
