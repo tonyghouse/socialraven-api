@@ -34,6 +34,7 @@ public class PostEntity {
 
     private OffsetDateTime scheduledTime;
 
+    private String providerPostId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "post_collection_id", nullable = false)

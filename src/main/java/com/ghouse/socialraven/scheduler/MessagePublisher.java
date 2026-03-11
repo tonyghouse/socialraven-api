@@ -18,6 +18,7 @@ public class MessagePublisher {
 
     private static final String POST_QUEUE = "post:queue";
     private static final String OAUTH_REFRESH_QUEUE = "oauth_refresh:queue";
+    private static final String ANALYTICS_QUEUE = "analytics:queue";
 
     /**
      * Push post IDs batch to FIFO queue
@@ -39,6 +40,29 @@ public class MessagePublisher {
 
         } catch (Exception e) {
             log.error("Failed publishing post batch", e);
+        }
+    }
+
+    /**
+     * Push analytics job IDs batch to analytics queue
+     */
+    public void publishAnalyticsJobIds(List<Long> jobIds) {
+        if (jobIds == null || jobIds.isEmpty()) return;
+
+        try (Jedis jedis = jedisPool.getResource()) {
+
+            Pipeline pipeline = jedis.pipelined();
+
+            for (Long id : jobIds) {
+                pipeline.lpush(ANALYTICS_QUEUE, id.toString());
+            }
+
+            pipeline.sync();
+
+            log.info("Published {} analytics jobs to queue", jobIds.size());
+
+        } catch (Exception e) {
+            log.error("Failed publishing analytics job batch", e);
         }
     }
 
