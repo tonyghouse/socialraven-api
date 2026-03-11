@@ -30,8 +30,10 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -263,35 +265,143 @@ public class PostService {
                     "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
         }
 
+        // --- Basic fields ---
         if (req.getTitle() != null) {
             collection.setTitle(req.getTitle());
         }
         if (req.getDescription() != null) {
             collection.setDescription(req.getDescription());
         }
-        if (req.getScheduledTime() != null) {
-            OffsetDateTime newTime = req.getScheduledTime();
-            long newEpochMillis = newTime.toInstant().toEpochMilli();
-            collection.setScheduledTime(newTime);
 
-            // Re-schedule SCHEDULED posts in Redis with the new time
-            List<PostEntity> posts = collection.getPosts();
-            if (posts != null) {
+        // Resolve final scheduledTime (may come from request or stay as-is)
+        final OffsetDateTime scheduledTime = req.getScheduledTime() != null
+                ? req.getScheduledTime()
+                : collection.getScheduledTime();
+        if (req.getScheduledTime() != null) {
+            collection.setScheduledTime(scheduledTime);
+        }
+
+        // --- Platform configs ---
+        if (req.getPlatformConfigs() != null) {
+            try {
+                collection.setPlatformConfigs(objectMapper.writeValueAsString(req.getPlatformConfigs()));
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException("Failed to serialize platformConfigs", e);
+            }
+        }
+
+        // --- Media replacement ---
+        if (req.getKeepMediaKeys() != null || req.getNewMedia() != null) {
+            List<String> keepKeys = req.getKeepMediaKeys() != null ? req.getKeepMediaKeys() : List.of();
+            List<PostMediaEntity> updatedMedia = new ArrayList<>();
+
+            // Retain only the existing media files whose keys are in keepKeys
+            if (collection.getMediaFiles() != null) {
+                updatedMedia.addAll(
+                        collection.getMediaFiles().stream()
+                                .filter(m -> keepKeys.contains(m.getFileKey()))
+                                .collect(Collectors.toList())
+                );
+            }
+
+            // Append newly uploaded media
+            if (req.getNewMedia() != null) {
+                for (PostMedia dto : req.getNewMedia()) {
+                    PostMediaEntity entity = new PostMediaEntity();
+                    entity.setFileKey(dto.getFileKey());
+                    entity.setFileName(dto.getFileName());
+                    entity.setMimeType(dto.getMimeType());
+                    entity.setSize(dto.getSize());
+                    entity.setPostCollection(collection);
+                    updatedMedia.add(entity);
+                }
+            }
+
+            // Replace via clear+addAll — orphanRemoval handles DB deletion of removed items
+            collection.getMediaFiles().clear();
+            collection.getMediaFiles().addAll(updatedMedia);
+        }
+
+        // --- Connected accounts update ---
+        List<String> newlyAddedProviderUserIds = new ArrayList<>();
+        if (req.getConnectedAccounts() != null) {
+            List<ConnectedAccount> requestedAccounts = req.getConnectedAccounts();
+
+            Set<String> requestedIds = requestedAccounts.stream()
+                    .map(ConnectedAccount::getProviderUserId)
+                    .collect(Collectors.toSet());
+            Set<String> currentIds = collection.getPosts() != null
+                    ? collection.getPosts().stream().map(PostEntity::getProviderUserId).collect(Collectors.toSet())
+                    : Set.of();
+
+            // Remove posts for accounts no longer in the requested list
+            List<String> removedPostRedisKeys = new ArrayList<>();
+            Iterator<PostEntity> iter = collection.getPosts().iterator();
+            while (iter.hasNext()) {
+                PostEntity post = iter.next();
+                if (!requestedIds.contains(post.getProviderUserId())) {
+                    if (post.getPostStatus() == PostStatus.SCHEDULED && post.getId() != null) {
+                        removedPostRedisKeys.add(post.getId().toString());
+                    }
+                    iter.remove(); // orphanRemoval deletes from DB on save
+                }
+            }
+            if (!removedPostRedisKeys.isEmpty()) {
                 try (Jedis jedis = jedisPool.getResource()) {
-                    for (PostEntity post : posts) {
-                        if (post.getPostStatus() == com.ghouse.socialraven.constant.PostStatus.SCHEDULED) {
-                            post.setScheduledTime(newTime);
-                            jedis.zadd(PostPoolHelper.getPostsPoolName(), newEpochMillis, post.getId().toString());
-                        }
+                    jedis.zrem(PostPoolHelper.getPostsPoolName(), removedPostRedisKeys.toArray(String[]::new));
+                }
+                log.info("Removed {} posts from Redis pool on account update", removedPostRedisKeys.size());
+            }
+
+            // Add posts for newly added accounts
+            PostCollectionType postType = collection.getPostCollectionType();
+            for (ConnectedAccount account : requestedAccounts) {
+                if (!currentIds.contains(account.getProviderUserId())) {
+                    PostEntity newPost = new PostEntity();
+                    newPost.setProvider(ProviderPlatformMapper.getProviderByPlatform(account.getPlatform()));
+                    newPost.setProviderUserId(account.getProviderUserId());
+                    newPost.setPostCollection(collection);
+                    newPost.setPostStatus(PostStatus.SCHEDULED);
+                    newPost.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
+                    newPost.setScheduledTime(scheduledTime);
+                    collection.getPosts().add(newPost);
+                    newlyAddedProviderUserIds.add(account.getProviderUserId());
+                }
+            }
+        }
+
+        // --- Update scheduledTime + Redis for existing SCHEDULED posts ---
+        if (req.getScheduledTime() != null && collection.getPosts() != null) {
+            long newEpochMillis = scheduledTime.toInstant().toEpochMilli();
+            try (Jedis jedis = jedisPool.getResource()) {
+                for (PostEntity post : collection.getPosts()) {
+                    if (post.getPostStatus() == PostStatus.SCHEDULED && post.getId() != null) {
+                        post.setScheduledTime(scheduledTime);
+                        jedis.zadd(PostPoolHelper.getPostsPoolName(), newEpochMillis, post.getId().toString());
                     }
                 }
             }
         }
 
+        // Save — also assigns IDs to newly added posts
         PostCollectionEntity saved = postCollectionRepo.save(collection);
 
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
-        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+        // Add newly created posts to Redis now that they have IDs
+        if (!newlyAddedProviderUserIds.isEmpty()) {
+            final long epochMillis = scheduledTime.toInstant().toEpochMilli();
+            try (Jedis jedis = jedisPool.getResource()) {
+                for (PostEntity post : saved.getPosts()) {
+                    if (newlyAddedProviderUserIds.contains(post.getProviderUserId())
+                            && post.getPostStatus() == PostStatus.SCHEDULED) {
+                        jedis.zadd(PostPoolHelper.getPostsPoolName(), epochMillis, post.getId().toString());
+                        log.info("New post added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduledTime);
+                    }
+                }
+            }
+        }
+
+        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostCollectionResponse(saved, connectedAccountMap);
     }
@@ -358,6 +468,7 @@ public class PostService {
         return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap));
     }
 
+    @SuppressWarnings("unchecked")
     private PostCollectionResponse getPostCollectionResponse(
             PostCollectionEntity collection,
             Map<String, ConnectedAccount> connectedAccountMap) {
@@ -380,6 +491,16 @@ public class PostService {
                 ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap)).toList()
                 : List.of();
 
+        // Parse platformConfigs JSON string back to Map
+        Map<String, Object> platformConfigsMap = null;
+        if (collection.getPlatformConfigs() != null && !collection.getPlatformConfigs().isBlank()) {
+            try {
+                platformConfigsMap = objectMapper.readValue(collection.getPlatformConfigs(), Map.class);
+            } catch (Exception e) {
+                log.warn("Failed to parse platformConfigs for collection {}: {}", collection.getId(), e.getMessage());
+            }
+        }
+
         return new PostCollectionResponse(
                 collection.getId(),
                 collection.getTitle(),
@@ -388,7 +509,8 @@ public class PostService {
                 collection.getPostCollectionType().name(),
                 deriveOverallStatus(posts),
                 postDtos,
-                mediaDtos
+                mediaDtos,
+                platformConfigsMap
         );
     }
 

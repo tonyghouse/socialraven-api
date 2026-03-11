@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @AllArgsConstructor
@@ -19,4 +20,6 @@ public class PostCollectionResponse {
     private String overallStatus;
     private List<PostResponse> posts;
     private List<MediaResponse> media;
+    /** Platform-specific configuration, e.g. YouTube title, Instagram alt text. */
+    private Map<String, Object> platformConfigs;
 }
