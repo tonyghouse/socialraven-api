@@ -28,6 +28,12 @@ public class OAuthInfoRefreshService {
     private YouTubeOAuthService youTubeOAuthService;
 
     @Autowired
+    private InstagramOAuthService instagramOAuthService;
+
+    @Autowired
+    private FacebookOAuthService facebookOAuthService;
+
+    @Autowired
     private ExecutorService virtualThreadExecutor; // injected bean
 
     public void refreshOAuthInfo(Long id) {
@@ -54,6 +60,10 @@ public class OAuthInfoRefreshService {
                     linkedInOAuthService.refreshAccessToken(oauthInfo);
                 } else if (Provider.YOUTUBE.equals(oauthInfo.getProvider())) {
                     youTubeOAuthService.getValidOAuthInfo(oauthInfo);
+                } else if (Provider.INSTAGRAM.equals(oauthInfo.getProvider())) {
+                    instagramOAuthService.refreshAccessToken(oauthInfo);
+                } else if (Provider.FACEBOOK.equals(oauthInfo.getProvider())) {
+                    facebookOAuthService.refreshAccessToken(oauthInfo);
                 } else {
                     log.warn("Unknown provider for id {}: {}", oauthInfo.getId(), oauthInfo.getProvider());
                 }

@@ -15,6 +15,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class FacebookOAuthService {
@@ -67,43 +68,32 @@ public class FacebookOAuthService {
             List<Map<String, Object>> pages = fetchFacebookPages(longAccessToken);
             log.info("Found {} Facebook Pages", pages != null ? pages.size() : 0);
 
-            // STEP 5: Check if already exists
+            // STEP 5: Upsert — update if already connected, otherwise insert
             log.info("Step 5: Checking if Facebook account already connected");
-            OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
+            OAuthInfoEntity oAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
                 userId, Provider.FACEBOOK, fbUserId
             );
-            if (existingAuthInfo != null) {
-                log.warn("Facebook account {} already connected for user {}", fbUserId, userId);
-                throw new RuntimeException("Facebook account already connected");
+            if (oAuthInfo == null) {
+                oAuthInfo = new OAuthInfoEntity();
+                oAuthInfo.setProvider(Provider.FACEBOOK);
+                oAuthInfo.setUserId(userId);
+                oAuthInfo.setProviderUserId(fbUserId);
+                log.info("Creating new Facebook OAuth record for user: {}", userId);
+            } else {
+                log.info("Updating existing Facebook OAuth record for user: {}", userId);
             }
 
             // STEP 6: Save everything
             log.info("Step 6: Saving OAuth info to database");
-            OAuthInfoEntity oAuthInfo = new OAuthInfoEntity();
-            oAuthInfo.setProvider(Provider.FACEBOOK);
-            oAuthInfo.setUserId(userId);
             oAuthInfo.setAccessToken(longAccessToken);
             long expiresAt = System.currentTimeMillis() + expiresIn * 1000L;
             oAuthInfo.setExpiresAt(expiresAt);
             oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAt));
-            oAuthInfo.setProviderUserId(fbUserId);
 
-            AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
-            
-//            // Store first page if available (you can modify to store all pages)
-//            if (pages != null && !pages.isEmpty()) {
-//                Map<String, Object> firstPage = pages.get(0);
-//                additional.setFacebookPageId((String) firstPage.get("id"));
-//                additional.setFacebookPageName((String) firstPage.get("name"));
-//                additional.setFacebookPageAccessToken((String) firstPage.get("access_token"));
-//                log.info("Stored Facebook Page: {} ({})", firstPage.get("name"), firstPage.get("id"));
-//            }
+            if (oAuthInfo.getAdditionalInfo() == null) {
+                oAuthInfo.setAdditionalInfo(new AdditionalOAuthInfo());
+            }
 
-            oAuthInfo.setAdditionalInfo(additional);
-
-//            if (existingAuthInfo != null) {
-//                oauthInfoEntity.setId(existingAuthInfo.getId());
-//            }
             repo.save(oAuthInfo);
             redisTokenExpirySaver.saveTokenExpiry(oAuthInfo);
 
@@ -186,5 +176,42 @@ public class FacebookOAuthService {
             log.warn("Failed to fetch Facebook Pages (non-critical): {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Facebook long-lived tokens (~60 days) can be refreshed by exchanging the current
+     * long-lived token for a new one via the fb_exchange_token grant.
+     */
+    public OAuthInfoEntity refreshAccessToken(OAuthInfoEntity info) {
+        log.info("Refreshing Facebook long-lived token for OAuthInfo ID: {}", info.getId());
+
+        Map<String, Object> response = exchangeLongLivedToken(info.getAccessToken());
+
+        String newAccessToken = (String) response.get("access_token");
+        Integer expiresIn = (Integer) response.get("expires_in");
+
+        if (newAccessToken == null) {
+            throw new RuntimeException("Facebook refresh did not return an access_token");
+        }
+
+        long newExpiresAtMillis = System.currentTimeMillis() + expiresIn * 1000L;
+        info.setAccessToken(newAccessToken);
+        info.setExpiresAt(newExpiresAtMillis);
+        info.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(newExpiresAtMillis));
+
+        OAuthInfoEntity saved = repo.save(info);
+        redisTokenExpirySaver.saveTokenExpiry(saved);
+
+        log.info("Facebook token refreshed successfully for OAuthInfo ID: {}", info.getId());
+        return saved;
+    }
+
+    public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
+        long now = System.currentTimeMillis();
+        // Refresh if expiring within 24 hours
+        if (info.getExpiresAt() - now > 24 * 60 * 60 * 1000L) {
+            return info;
+        }
+        return refreshAccessToken(info);
     }
 }
