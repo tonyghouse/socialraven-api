@@ -2,6 +2,7 @@ package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostCollectionResponse;
+import com.ghouse.socialraven.dto.ScheduleDraftRequest;
 import com.ghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.ghouse.socialraven.service.post.PostService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
@@ -62,6 +63,14 @@ public class PostCollectionController {
             @RequestBody UpdatePostCollectionRequest request) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return postService.updatePostCollection(userId, id, request);
+    }
+
+    @PostMapping("/{id}/schedule")
+    public PostCollectionResponse scheduleDraft(
+            @PathVariable Long id,
+            @RequestBody ScheduleDraftRequest request) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.scheduleDraftCollection(userId, id, request);
     }
 
 }

@@ -22,12 +22,19 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
            "ORDER BY c.scheduledTime DESC")
     Page<PostCollectionEntity> findScheduledCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
 
-    // Collections where NO post is still SCHEDULED (all have been processed)
+    // Collections where NO post is still SCHEDULED (all have been processed), excluding drafts
     @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "ORDER BY c.scheduledTime DESC")
     Page<PostCollectionEntity> findPublishedCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
+
+    // Draft collections only
+    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus = com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "ORDER BY c.id DESC")
+    Page<PostCollectionEntity> findDraftCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
 
     // --- Search: Scheduled (title/description, no account filter) ---
     @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
@@ -60,6 +67,7 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // --- Search: Published (title/description, no account filter) ---
     @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
@@ -71,12 +79,14 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // --- Search: Published + account filter ---
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
            "ORDER BY c.scheduledTime DESC",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +

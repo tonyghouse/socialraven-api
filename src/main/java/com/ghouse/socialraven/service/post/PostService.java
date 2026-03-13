@@ -13,6 +13,7 @@ import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostCollectionResponse;
 import com.ghouse.socialraven.dto.PostMedia;
 import com.ghouse.socialraven.dto.PostResponse;
+import com.ghouse.socialraven.dto.ScheduleDraftRequest;
 import com.ghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
@@ -77,21 +78,23 @@ public class PostService {
 
     @Transactional
     public PostCollection schedulePostCollection(PostCollection postCollectionReq) {
+        boolean isDraft = postCollectionReq.isDraft();
         List<ConnectedAccount> connectedAccounts = postCollectionReq.getConnectedAccounts();
-        if (CollectionUtils.isEmpty(connectedAccounts)) {
+
+        // Drafts may have no accounts (user picks them later); scheduled posts require at least one
+        if (!isDraft && CollectionUtils.isEmpty(connectedAccounts)) {
             throw new RuntimeException("Select connected accounts for post collection");
         }
 
         PostCollectionEntity postCollection = new PostCollectionEntity();
 
-
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        postCollection.setPostCollectionStatus(PostCollectionStatus.SCHEDULED);
+        postCollection.setPostCollectionStatus(isDraft ? PostCollectionStatus.DRAFT : PostCollectionStatus.SCHEDULED);
         PostCollectionType postType = postCollectionReq.getPostType();
         postCollection.setPostCollectionType(postType);
         postCollection.setUserId(userId);
-        postCollection.setTitle(postCollectionReq.getTitle());
-        postCollection.setDescription(postCollectionReq.getDescription());
+        postCollection.setTitle(postCollectionReq.getTitle() != null ? postCollectionReq.getTitle() : "");
+        postCollection.setDescription(postCollectionReq.getDescription() != null ? postCollectionReq.getDescription() : "");
         OffsetDateTime scheduledTime = postCollectionReq.getScheduledTime();
         postCollection.setScheduledTime(scheduledTime);
 
@@ -102,7 +105,6 @@ public class PostService {
                 throw new RuntimeException("Failed to serialize platformConfigs", e);
             }
         }
-
 
         List<PostMedia> media = postCollectionReq.getMedia() != null ? postCollectionReq.getMedia() : Collections.emptyList();
         List<PostMediaEntity> postMediaEntities = new ArrayList<>();
@@ -118,32 +120,82 @@ public class PostService {
         postCollection.setMediaFiles(postMediaEntities);
 
         List<PostEntity> postEntities = new ArrayList<>();
-        for (ConnectedAccount connectedAccount : connectedAccounts) {
-            PostEntity post = new PostEntity();
-            post.setProvider(ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()));
-            post.setProviderUserId(connectedAccount.getProviderUserId());
-            post.setPostCollection(postCollection);
-            post.setPostStatus(PostStatus.SCHEDULED);
-            post.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
-            post.setScheduledTime(scheduledTime);
-            postEntities.add(post);
+        if (!CollectionUtils.isEmpty(connectedAccounts)) {
+            PostStatus postStatus = isDraft ? PostStatus.DRAFT : PostStatus.SCHEDULED;
+            for (ConnectedAccount connectedAccount : connectedAccounts) {
+                PostEntity post = new PostEntity();
+                post.setProvider(ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()));
+                post.setProviderUserId(connectedAccount.getProviderUserId());
+                post.setPostCollection(postCollection);
+                post.setPostStatus(postStatus);
+                post.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
+                post.setScheduledTime(scheduledTime);
+                postEntities.add(post);
+            }
         }
         postCollection.setPosts(postEntities);
 
         PostCollectionEntity savedPost = postCollectionRepo.save(postCollection);
 
-        List<PostEntity> posts = savedPost.getPosts();
-        for (PostEntity post : posts) {
-            OffsetDateTime scheduleTime = post.getScheduledTime();
-            long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
-
-            try (Jedis jedis = jedisPool.getResource()) {
-                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
-                log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduleTime);
+        // Only add to Redis scheduling pool for non-draft posts
+        if (!isDraft) {
+            List<PostEntity> posts = savedPost.getPosts();
+            for (PostEntity post : posts) {
+                OffsetDateTime scheduleTime = post.getScheduledTime();
+                long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
+                try (Jedis jedis = jedisPool.getResource()) {
+                    jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
+                    log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduleTime);
+                }
             }
+        } else {
+            log.info("Draft saved: collectionId={}, userId={}", savedPost.getId(), userId);
         }
 
         return postCollectionReq;
+    }
+
+    @Transactional
+    public PostCollectionResponse scheduleDraftCollection(String userId, Long collectionId, ScheduleDraftRequest req) {
+        PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
+                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
+        if (!collection.getUserId().equals(userId)) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+        if (collection.getPostCollectionStatus() != PostCollectionStatus.DRAFT) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Collection is not a draft", org.springframework.http.HttpStatus.BAD_REQUEST);
+        }
+        if (CollectionUtils.isEmpty(collection.getPosts())) {
+            throw new com.ghouse.socialraven.exception.SocialRavenException(
+                    "Select at least one connected account before scheduling", org.springframework.http.HttpStatus.BAD_REQUEST);
+        }
+
+        OffsetDateTime scheduledTime = req.getScheduledTime();
+        collection.setScheduledTime(scheduledTime);
+        collection.setPostCollectionStatus(PostCollectionStatus.SCHEDULED);
+
+        for (PostEntity post : collection.getPosts()) {
+            post.setScheduledTime(scheduledTime);
+            post.setPostStatus(PostStatus.SCHEDULED);
+        }
+
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+
+        long epochUtcMillis = scheduledTime.toInstant().toEpochMilli();
+        try (Jedis jedis = jedisPool.getResource()) {
+            for (PostEntity post : saved.getPosts()) {
+                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
+                log.info("Draft promoted to scheduled: postId={}, scheduleUTC={}", post.getId(), scheduledTime);
+            }
+        }
+
+        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+        return getPostCollectionResponse(saved, connectedAccountMap);
     }
 
 
@@ -355,17 +407,20 @@ public class PostService {
 
             // Add posts for newly added accounts
             PostCollectionType postType = collection.getPostCollectionType();
+            boolean collectionIsDraft = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT;
             for (ConnectedAccount account : requestedAccounts) {
                 if (!currentIds.contains(account.getProviderUserId())) {
                     PostEntity newPost = new PostEntity();
                     newPost.setProvider(ProviderPlatformMapper.getProviderByPlatform(account.getPlatform()));
                     newPost.setProviderUserId(account.getProviderUserId());
                     newPost.setPostCollection(collection);
-                    newPost.setPostStatus(PostStatus.SCHEDULED);
+                    newPost.setPostStatus(collectionIsDraft ? PostStatus.DRAFT : PostStatus.SCHEDULED);
                     newPost.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
                     newPost.setScheduledTime(scheduledTime);
                     collection.getPosts().add(newPost);
-                    newlyAddedProviderUserIds.add(account.getProviderUserId());
+                    if (!collectionIsDraft) {
+                        newlyAddedProviderUserIds.add(account.getProviderUserId());
+                    }
                 }
             }
         }
@@ -462,6 +517,9 @@ public class PostService {
             } else {
                 collectionsPage = postCollectionRepo.findPublishedCollectionsByUserId(userId, pageable);
             }
+        } else if ("draft".equalsIgnoreCase(type)) {
+            Pageable draftPageable = PageRequest.of(page, 12, Sort.by("id").descending());
+            collectionsPage = postCollectionRepo.findDraftCollectionsByUserId(userId, draftPageable);
         } else {
             collectionsPage = postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
         }
@@ -501,13 +559,18 @@ public class PostService {
             }
         }
 
+        // Drafts report their own status rather than deriving from post states
+        String overallStatus = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT
+                ? "DRAFT"
+                : deriveOverallStatus(posts);
+
         return new PostCollectionResponse(
                 collection.getId(),
                 collection.getTitle(),
                 collection.getDescription(),
                 collection.getScheduledTime(),
                 collection.getPostCollectionType().name(),
-                deriveOverallStatus(posts),
+                overallStatus,
                 postDtos,
                 mediaDtos,
                 platformConfigsMap

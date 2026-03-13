@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.ghouse.socialraven.constant.PostCollectionType;
 import com.ghouse.socialraven.constant.PostType;
 import lombok.Data;
@@ -25,4 +26,8 @@ public class PostCollection {
     private OffsetDateTime scheduledTime; // stored in UTC in backend
 
     private Map<String, Object> platformConfigs;
+
+    /** When true, saves as a draft without scheduling or requiring a scheduledTime. */
+    @JsonProperty("isDraft")
+    private boolean isDraft = false;
 }
