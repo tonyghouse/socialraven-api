@@ -8,93 +8,224 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
+/**
+ * Note: fromDate / toDate are NEVER null — the service always passes sentinel values
+ * (year 2000 / year 2100) when no date range is selected, so PostgreSQL can always
+ * infer the parameter type.  IS NULL guards on OffsetDateTime params cause
+ * "could not determine data type of parameter" errors with the PostgreSQL JDBC driver.
+ */
 @Repository
 public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, Long> {
 
     Page<PostCollectionEntity> findByUserIdOrderByScheduledTimeDesc(String userId, Pageable pageable);
 
-    // Collections where ALL posts are still SCHEDULED (no post has been processed yet)
-    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
-           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
-           "AND p.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "ORDER BY c.scheduledTime DESC")
-    Page<PostCollectionEntity> findScheduledCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
-
-    // Collections where NO post is still SCHEDULED (all have been processed), excluding drafts
-    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
-           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
-           "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "ORDER BY c.scheduledTime DESC")
-    Page<PostCollectionEntity> findPublishedCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
-
-    // Draft collections only
-    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+    // DRAFT — with optional search (no date range; drafts have no scheduledTime)
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
            "AND c.postCollectionStatus = com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "ORDER BY c.id DESC")
-    Page<PostCollectionEntity> findDraftCollectionsByUserId(@Param("userId") String userId, Pageable pageable);
-
-    // --- Search: Scheduled (title/description, no account filter) ---
-    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
-           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
-           "AND p.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
-           "ORDER BY c.scheduledTime DESC")
-    Page<PostCollectionEntity> searchScheduledCollections(
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search)",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus = com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search)")
+    Page<PostCollectionEntity> findDraftCollections(
             @Param("userId") String userId,
             @Param("search") String search,
             Pageable pageable);
 
-    // --- Search: Scheduled + account filter ---
+    // DRAFT — with platform filter
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus = com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus = com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)")
+    Page<PostCollectionEntity> findDraftCollectionsByPlatform(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            Pageable pageable);
+
+    // ──────────────────────────────────────────────────────────────────────────────
+    // SCHEDULED — no platform filter
+    // ──────────────────────────────────────────────────────────────────────────────
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findScheduledCollections(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
+            Pageable pageable);
+
+    // SCHEDULED — with platform filter
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findScheduledCollectionsByPlatform(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
+            Pageable pageable);
+
+    // SCHEDULED — with account filter, no platform
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
-           "ORDER BY c.scheduledTime DESC",
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
-           "AND p.providerUserId IN :providerUserIds")
-    Page<PostCollectionEntity> searchScheduledCollectionsWithAccounts(
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findScheduledCollectionsWithAccounts(
             @Param("userId") String userId,
             @Param("search") String search,
             @Param("providerUserIds") List<String> providerUserIds,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
             Pageable pageable);
 
-    // --- Search: Published (title/description, no account filter) ---
-    @Query("SELECT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+    // SCHEDULED — with account filter + platform
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus != com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findScheduledCollectionsWithAccountsAndPlatform(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            @Param("providerUserIds") List<String> providerUserIds,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
+            Pageable pageable);
+
+    // ──────────────────────────────────────────────────────────────────────────────
+    // PUBLISHED — no platform filter
+    // ──────────────────────────────────────────────────────────────────────────────
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
            "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
-           "ORDER BY c.scheduledTime DESC")
-    Page<PostCollectionEntity> searchPublishedCollections(
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
+           "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findPublishedCollections(
             @Param("userId") String userId,
             @Param("search") String search,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
             Pageable pageable);
 
-    // --- Search: Published + account filter ---
+    // PUBLISHED — with platform filter
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
+           "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
+           "AND p.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findPublishedCollectionsByPlatform(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
+            Pageable pageable);
+
+    // PUBLISHED — with account filter, no platform
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
            "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
-           "ORDER BY c.scheduledTime DESC",
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
            "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
            "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
-           "AND p.providerUserId IN :providerUserIds")
-    Page<PostCollectionEntity> searchPublishedCollectionsWithAccounts(
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findPublishedCollectionsWithAccounts(
             @Param("userId") String userId,
             @Param("search") String search,
             @Param("providerUserIds") List<String> providerUserIds,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
+            Pageable pageable);
+
+    // PUBLISHED — with account filter + platform
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.userId = :userId " +
+           "AND c.postCollectionStatus != com.ghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
+           "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.ghouse.socialraven.constant.PostStatus.SCHEDULED) " +
+           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds " +
+           "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
+    Page<PostCollectionEntity> findPublishedCollectionsWithAccountsAndPlatform(
+            @Param("userId") String userId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            @Param("providerUserIds") List<String> providerUserIds,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate,
             Pageable pageable);
 }
-

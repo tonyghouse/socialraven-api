@@ -478,48 +478,98 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public Page<PostCollectionResponse> getUserPostCollections(
-            String userId, int page, String type, String search, List<String> providerUserIds) {
-        Pageable pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
+            String userId, int page, String type, String search, List<String> providerUserIds,
+            String platform, String sortDir, String dateRange) {
+        Sort sort = "asc".equalsIgnoreCase(sortDir)
+                ? Sort.by("scheduledTime").ascending()
+                : Sort.by("scheduledTime").descending();
+        Pageable pageable = PageRequest.of(page, 12, sort);
 
         List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
-        // Build LIKE pattern: lowercase %term%, or null when no search
         String searchPattern = (search != null && !search.trim().isEmpty())
                 ? "%" + search.trim().toLowerCase() + "%"
                 : null;
-        boolean hasSearch = searchPattern != null;
         boolean hasAccountFilter = !CollectionUtils.isEmpty(providerUserIds);
+
+        // Platform: convert to uppercase enum name string (e.g. "INSTAGRAM"), null if not set
+        String platformStr = null;
+        if (platform != null && !platform.isBlank()) {
+            try {
+                platformStr = Provider.valueOf(platform.toUpperCase()).name();
+            } catch (IllegalArgumentException ignored) {}
+        }
+        boolean hasPlatformFilter = platformStr != null;
+
+        // Always non-null: PostgreSQL JDBC can't infer the type of a NULL OffsetDateTime
+        // parameter in "? IS NULL" expressions. Sentinel values cover the full date range
+        // when no period filter is selected.
+        OffsetDateTime fromDate = OffsetDateTime.of(2000, 1, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
+        OffsetDateTime toDate   = OffsetDateTime.of(2100, 1, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
+        if (dateRange != null) {
+            OffsetDateTime now = OffsetDateTime.now();
+            switch (dateRange.toLowerCase()) {
+                case "today" -> {
+                    fromDate = now.toLocalDate().atStartOfDay().atOffset(now.getOffset());
+                    toDate = fromDate.plusDays(1).minusNanos(1);
+                }
+                case "week" -> {
+                    fromDate = now.toLocalDate()
+                            .with(java.time.DayOfWeek.MONDAY)
+                            .atStartOfDay().atOffset(now.getOffset());
+                    toDate = fromDate.plusWeeks(1).minusNanos(1);
+                }
+                case "month" -> {
+                    fromDate = now.toLocalDate().withDayOfMonth(1).atStartOfDay().atOffset(now.getOffset());
+                    toDate = fromDate.plusMonths(1).minusNanos(1);
+                }
+                default -> {}
+            }
+        }
 
         Page<PostCollectionEntity> collectionsPage;
         if ("scheduled".equalsIgnoreCase(type)) {
-            if (hasSearch || hasAccountFilter) {
-                if (hasAccountFilter) {
-                    collectionsPage = postCollectionRepo.searchScheduledCollectionsWithAccounts(
-                            userId, searchPattern, providerUserIds, pageable);
-                } else {
-                    collectionsPage = postCollectionRepo.searchScheduledCollections(
-                            userId, searchPattern, pageable);
-                }
+            if (hasAccountFilter && hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findScheduledCollectionsWithAccountsAndPlatform(
+                        userId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
+            } else if (hasAccountFilter) {
+                collectionsPage = postCollectionRepo.findScheduledCollectionsWithAccounts(
+                        userId, searchPattern, providerUserIds, fromDate, toDate, pageable);
+            } else if (hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findScheduledCollectionsByPlatform(
+                        userId, searchPattern, platformStr, fromDate, toDate, pageable);
             } else {
-                collectionsPage = postCollectionRepo.findScheduledCollectionsByUserId(userId, pageable);
+                collectionsPage = postCollectionRepo.findScheduledCollections(
+                        userId, searchPattern, fromDate, toDate, pageable);
             }
         } else if ("published".equalsIgnoreCase(type)) {
-            if (hasSearch || hasAccountFilter) {
-                if (hasAccountFilter) {
-                    collectionsPage = postCollectionRepo.searchPublishedCollectionsWithAccounts(
-                            userId, searchPattern, providerUserIds, pageable);
-                } else {
-                    collectionsPage = postCollectionRepo.searchPublishedCollections(
-                            userId, searchPattern, pageable);
-                }
+            if (hasAccountFilter && hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findPublishedCollectionsWithAccountsAndPlatform(
+                        userId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
+            } else if (hasAccountFilter) {
+                collectionsPage = postCollectionRepo.findPublishedCollectionsWithAccounts(
+                        userId, searchPattern, providerUserIds, fromDate, toDate, pageable);
+            } else if (hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findPublishedCollectionsByPlatform(
+                        userId, searchPattern, platformStr, fromDate, toDate, pageable);
             } else {
-                collectionsPage = postCollectionRepo.findPublishedCollectionsByUserId(userId, pageable);
+                collectionsPage = postCollectionRepo.findPublishedCollections(
+                        userId, searchPattern, fromDate, toDate, pageable);
             }
         } else if ("draft".equalsIgnoreCase(type)) {
-            Pageable draftPageable = PageRequest.of(page, 12, Sort.by("id").descending());
-            collectionsPage = postCollectionRepo.findDraftCollectionsByUserId(userId, draftPageable);
+            Sort draftSort = "asc".equalsIgnoreCase(sortDir)
+                    ? Sort.by("id").ascending()
+                    : Sort.by("id").descending();
+            Pageable draftPageable = PageRequest.of(page, 12, draftSort);
+            if (hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findDraftCollectionsByPlatform(
+                        userId, searchPattern, platformStr, draftPageable);
+            } else {
+                collectionsPage = postCollectionRepo.findDraftCollections(
+                        userId, searchPattern, draftPageable);
+            }
         } else {
             collectionsPage = postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
         }

@@ -39,9 +39,12 @@ public class PostCollectionController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) List<String> providerUserIds) {
+            @RequestParam(required = false) List<String> providerUserIds,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String sortDir,
+            @RequestParam(required = false) String dateRange) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        return postService.getUserPostCollections(userId, page, type, search, providerUserIds);
+        return postService.getUserPostCollections(userId, page, type, search, providerUserIds, platform, sortDir, dateRange);
     }
 
     @GetMapping("/{id}")
