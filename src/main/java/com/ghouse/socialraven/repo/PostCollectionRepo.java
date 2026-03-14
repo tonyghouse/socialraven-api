@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.repo;
 
+import com.ghouse.socialraven.constant.PostCollectionStatus;
 import com.ghouse.socialraven.entity.PostCollectionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Note: fromDate / toDate are NEVER null — the service always passes sentinel values
@@ -21,6 +23,25 @@ import java.util.List;
 public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, Long> {
 
     Page<PostCollectionEntity> findByUserIdOrderByScheduledTimeDesc(String userId, Pageable pageable);
+
+    Optional<PostCollectionEntity> findByIdAndUserId(Long id, String userId);
+
+    /**
+     * Counts non-draft post-collections for a user scheduled on or after startOfMonth.
+     * Used for monthly usage quota calculation.
+     */
+    @Query("""
+            SELECT COUNT(pc)
+            FROM PostCollectionEntity pc
+            WHERE pc.userId = :userId
+              AND pc.postCollectionStatus <> :draft
+              AND pc.scheduledTime >= :startOfMonth
+            """)
+    long countNonDraftPostsFromMonth(
+            @Param("userId") String userId,
+            @Param("draft") PostCollectionStatus draft,
+            @Param("startOfMonth") OffsetDateTime startOfMonth
+    );
 
     // DRAFT — with optional search (no date range; drafts have no scheduledTime)
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.userId = :userId " +
