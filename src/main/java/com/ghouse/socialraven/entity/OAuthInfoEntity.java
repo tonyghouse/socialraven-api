@@ -37,6 +37,9 @@ public class OAuthInfoEntity {
     @Column(nullable = false)
     private String userId;
 
+    @Column(name = "workspace_id")
+    private String workspaceId;
+
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb", nullable = false)
     private AdditionalOAuthInfo additionalInfo;

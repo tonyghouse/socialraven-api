@@ -28,11 +28,11 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
                 select p
                 from PostEntity p
                 join p.postCollection pc
-                where pc.userId = :userId
+                where pc.workspaceId = :workspaceId
                   and p.postStatus = :postStatus
             """)
-    Page<PostEntity> findByPostCollectionUserIdAndPostStatus(
-            @Param("userId") String userId,
+    Page<PostEntity> findByPostCollectionWorkspaceIdAndPostStatus(
+            @Param("workspaceId") String workspaceId,
             @Param("postStatus") PostStatus postStatus,
             Pageable pageable
     );
@@ -41,10 +41,10 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
                 select p
                 from PostEntity p
                 join p.postCollection pc
-                where pc.userId = :userId
+                where pc.workspaceId = :workspaceId
             """)
-    Page<PostEntity> findByPostCollectionUserId(
-            @Param("userId") String userId,
+    Page<PostEntity> findByPostCollectionWorkspaceId(
+            @Param("workspaceId") String workspaceId,
             Pageable pageable
     );
 
@@ -53,13 +53,13 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
                 select p
                 from PostEntity p
                 join fetch p.postCollection pc
-                where pc.userId = :userId
+                where pc.workspaceId = :workspaceId
                   and p.scheduledTime >= :startTime
                   and p.scheduledTime < :endTime
                 order by p.scheduledTime asc
             """)
     List<PostEntity> findCalendarPosts(
-            @Param("userId") String userId,
+            @Param("workspaceId") String workspaceId,
             @Param("startTime") OffsetDateTime startTime,
             @Param("endTime") OffsetDateTime endTime
     );
@@ -69,18 +69,16 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
                 select p
                 from PostEntity p
                 join fetch p.postCollection pc
-                where pc.userId = :userId
+                where pc.workspaceId = :workspaceId
                   and p.scheduledTime >= :startTime
                   and p.scheduledTime < :endTime
                   and p.providerUserId in :providerUserIds
                 order by p.scheduledTime asc
             """)
     List<PostEntity> findCalendarPostsFiltered(
-            @Param("userId") String userId,
+            @Param("workspaceId") String workspaceId,
             @Param("startTime") OffsetDateTime startTime,
             @Param("endTime") OffsetDateTime endTime,
             @Param("providerUserIds") List<String> providerUserIds
     );
-
 }
-

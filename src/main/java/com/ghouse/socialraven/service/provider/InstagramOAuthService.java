@@ -6,6 +6,7 @@ import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.TimeUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,6 +71,7 @@ public class InstagramOAuthService {
             oAuthInfo.setProvider(Provider.INSTAGRAM);
             oAuthInfo.setUserId(userId);
             oAuthInfo.setProviderUserId(instagramUserId);
+            oAuthInfo.setWorkspaceId(WorkspaceContext.getWorkspaceId());
             log.info("Creating new Instagram OAuth record for user: {}", userId);
         } else {
             log.info("Updating existing Instagram OAuth record for user: {}", userId);

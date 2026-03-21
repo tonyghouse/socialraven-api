@@ -58,28 +58,30 @@ public class AccountProfileService {
     @Autowired
     private Environment environment;
 
-
     @Autowired
     private PostCollectionRepo postRepo;
 
-
-    public List<ConnectedAccount> getConnectedAccounts(String userId, @Nonnull Platform platform) {
+    public List<ConnectedAccount> getConnectedAccounts(String workspaceId, @Nonnull Platform platform) {
         Provider provider = ProviderPlatformMapper.getProviderByPlatform(platform);
-        List<OAuthInfoEntity> authInfos = oauthInfoRepo.findAllByUserIdAndProvider(userId, provider);
-        return getConnectedAccounts(userId, authInfos);
+        List<OAuthInfoEntity> authInfos = oauthInfoRepo.findAllByWorkspaceIdAndProvider(workspaceId, provider);
+        return buildConnectedAccounts(workspaceId, authInfos);
     }
 
-    private List<ConnectedAccount> getConnectedAccounts(String userId, List<OAuthInfoEntity> authInfos) {
+    public List<ConnectedAccount> getAllConnectedAccounts(String workspaceId) {
+        List<OAuthInfoEntity> authInfos = oauthInfoRepo.findAllByWorkspaceId(workspaceId);
+        return buildConnectedAccounts(workspaceId, authInfos);
+    }
+
+    private List<ConnectedAccount> buildConnectedAccounts(String workspaceId, List<OAuthInfoEntity> authInfos) {
         List<ConnectedAccount> connectedAccounts = new ArrayList<>();
 
         for (OAuthInfoEntity authInfo : authInfos) {
-            String redisKey = userId + ":" + authInfo.getProviderUserId();
+            String redisKey = workspaceId + ":" + authInfo.getProviderUserId();
             ConnectedAccount cached = getConnectedAccountFromCache(redisKey);
             if (cached != null) {
                 connectedAccounts.add(cached);
                 continue;
             }
-
 
             ConnectedAccount connectedAccount = null;
             if (Provider.X.equals(authInfo.getProvider())) {
@@ -96,18 +98,14 @@ public class AccountProfileService {
                 } else {
                     connectedAccount = getExpiredAuthInfoModel(authInfo);
                 }
-
             } else if (Provider.YOUTUBE.equals(authInfo.getProvider())) {
                 var validOAuthInfo = youTubeOAuthService.getValidOAuthInfo(authInfo);
                 connectedAccount = youTubeProfileService.fetchProfile(validOAuthInfo);
             } else if (Provider.INSTAGRAM.equals(authInfo.getProvider())) {
                 var validOAuthInfo = instagramOAuthService.getValidOAuthInfo(authInfo);
                 connectedAccount = instagramProfileService.fetchProfile(validOAuthInfo);
-            } else{
-                connectedAccount=null;
             }
 
-            // If provider returned valid data → STORE IN REDIS for 24 hours
             if (connectedAccount != null) {
                 connectedAccounts.add(connectedAccount);
                 try (var jedis = jedisPool.getResource()) {
@@ -119,8 +117,7 @@ public class AccountProfileService {
             }
         }
 
-        //map allowed post types:
-        connectedAccounts.forEach(a->{
+        connectedAccounts.forEach(a -> {
             a.setAllowedFormats(AllowedPostTypeFetcher.getAllowedPostTypes(a.getPlatform()));
         });
 
@@ -131,12 +128,10 @@ public class AccountProfileService {
         ConnectedAccount cached = null;
         try (var jedis = jedisPool.getResource()) {
             String redisValue = jedis.get(redisKey);
-
             if (redisValue != null) {
                 try {
                     cached = ConnectedAccount.fromJson(redisValue);
                 } catch (Exception ex) {
-                    // Parsing failed → treat as null
                     cached = null;
                 }
             }
@@ -144,42 +139,31 @@ public class AccountProfileService {
         return cached;
     }
 
-
-    public List<ConnectedAccount> getAllConnectedAccounts(String userId) {
-        List<OAuthInfoEntity> authInfos =  authInfos = oauthInfoRepo.findAllByUserId(userId);
-        return getConnectedAccounts(userId, authInfos);
-    }
-
-
     private ConnectedAccount getExpiredAuthInfoModel(OAuthInfoEntity authInfo) {
         ConnectedAccount connected = new ConnectedAccount();
         connected.setProviderUserId(authInfo.getProviderUserId());
         Platform platform = ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider());
         connected.setPlatform(platform);
-        connected.setUsername("RE AUTHORIZE" + platform.name()+" User: "+authInfo.getProviderUserId());
+        connected.setUsername("RE AUTHORIZE" + platform.name() + " User: " + authInfo.getProviderUserId());
         connected.setProfilePicLink("");
         return connected;
     }
-
 
     private static ConnectedAccount mapToUnknownConnectedAccount(OAuthInfoEntity authInfo, String providerUserId) {
         ConnectedAccount connected = new ConnectedAccount();
         connected.setProviderUserId(providerUserId);
         Platform platform = ProviderPlatformMapper.getPlatformByProvider(authInfo.getProvider());
         connected.setPlatform(platform);
-        connected.setUsername(platform.name()+" User: "+providerUserId);
+        connected.setUsername(platform.name() + " User: " + providerUserId);
         connected.setProfilePicLink(null);
         return connected;
     }
 
-
-    public void deleteConnectedAccount(String userId, String providerUserId) {
-        OAuthInfoEntity oauthInfo = oauthInfoRepo.findByUserIdAndProviderUserId(userId, providerUserId);
-        if(oauthInfo == null){
+    public void deleteConnectedAccount(String workspaceId, String providerUserId) {
+        OAuthInfoEntity oauthInfo = oauthInfoRepo.findByWorkspaceIdAndProviderUserId(workspaceId, providerUserId);
+        if (oauthInfo == null) {
             throw new RuntimeException("Account info not found");
         }
-
-
         oauthInfoRepo.delete(oauthInfo);
     }
 }

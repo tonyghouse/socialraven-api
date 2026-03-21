@@ -1,6 +1,7 @@
 package com.ghouse.socialraven.entity;
 
 import com.ghouse.socialraven.constant.PlanType;
+import com.ghouse.socialraven.constant.UserType;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -16,11 +17,11 @@ public class PlanConfigEntity {
     @Column(name = "plan_type", length = 50, nullable = false)
     private PlanType planType;
 
-    /** Monthly post-collection limit; null = unlimited */
+    /** Monthly post-collection limit; null = unlimited; -1 = unlimited (agency custom) */
     @Column(name = "posts_per_month")
     private Integer postsPerMonth;
 
-    /** Connected accounts limit; null = unlimited */
+    /** Connected accounts limit; null = unlimited; -1 = unlimited (agency custom) */
     @Column(name = "accounts_limit")
     private Integer accountsLimit;
 
@@ -30,4 +31,13 @@ public class PlanConfigEntity {
     /** Trial duration in days; null for paid plans */
     @Column(name = "trial_days")
     private Integer trialDays;
+
+    /** Max workspaces allowed; 1 for influencer plans, -1 = unlimited */
+    @Column(name = "max_workspaces", nullable = false)
+    private Integer maxWorkspaces;
+
+    /** Which user type this plan is intended for */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "user_type", length = 20, nullable = false)
+    private UserType userType;
 }

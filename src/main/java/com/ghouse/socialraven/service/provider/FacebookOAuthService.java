@@ -6,6 +6,7 @@ import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.TimeUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,6 +79,7 @@ public class FacebookOAuthService {
                 oAuthInfo.setProvider(Provider.FACEBOOK);
                 oAuthInfo.setUserId(userId);
                 oAuthInfo.setProviderUserId(fbUserId);
+                oAuthInfo.setWorkspaceId(WorkspaceContext.getWorkspaceId());
                 log.info("Creating new Facebook OAuth record for user: {}", userId);
             } else {
                 log.info("Updating existing Facebook OAuth record for user: {}", userId);

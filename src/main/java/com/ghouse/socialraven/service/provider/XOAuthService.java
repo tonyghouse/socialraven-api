@@ -8,6 +8,7 @@ import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -90,6 +91,7 @@ public class XOAuthService {
                 info.setProvider(Provider.X);
                 info.setProviderUserId(providerUserId);
                 info.setUserId(userId);
+                info.setWorkspaceId(WorkspaceContext.getWorkspaceId());
             }
 
             // Update token info

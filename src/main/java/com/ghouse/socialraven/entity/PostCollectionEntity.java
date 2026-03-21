@@ -19,8 +19,12 @@ public class PostCollectionEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private String userId;
+    /** Attribution only — "Scheduled by Sara". Never used for data scoping. */
+    @Column(name = "created_by", nullable = false)
+    private String createdBy;
+
+    @Column(name = "workspace_id")
+    private String workspaceId;
 
     @Column(length = 1000, nullable = false)
     private String title;

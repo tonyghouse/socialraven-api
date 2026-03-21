@@ -1,6 +1,7 @@
 package com.ghouse.socialraven.controller;
 
 import com.ghouse.socialraven.service.storage.S3PresignedUrlService;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
@@ -53,7 +54,8 @@ public class MediaController {
             @RequestParam String mimeType
     ) {
 
-        String key = "posts/" + System.currentTimeMillis() + "_" + fileName;
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        String key = workspaceId + "/posts/" + System.currentTimeMillis() + "_" + fileName;
 
         String uploadUrl = s3Service.generateUploadUrl(key, mimeType);
 

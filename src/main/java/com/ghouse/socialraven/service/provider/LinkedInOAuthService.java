@@ -6,6 +6,7 @@ import com.ghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 
 import java.util.Map;
 
@@ -97,6 +98,7 @@ public class LinkedInOAuthService {
 
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         oauthInfoEntity.setUserId(userId);
+        oauthInfoEntity.setWorkspaceId(WorkspaceContext.getWorkspaceId());
 
         // JSONB container
         AdditionalOAuthInfo additional = new AdditionalOAuthInfo();

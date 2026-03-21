@@ -7,6 +7,7 @@ import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.repo.AccountAnalyticsSnapshotRepo;
 import com.ghouse.socialraven.repo.PostAnalyticsSnapshotRepo;
 import com.ghouse.socialraven.repo.PostRepo;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,8 +40,9 @@ public class AnalyticsApiService {
 
     public AnalyticsOverviewResponse getOverview(String userId, int days) {
         try {
+            String workspaceId = WorkspaceContext.getWorkspaceId();
             OffsetDateTime since = OffsetDateTime.now(ZoneOffset.UTC).minusDays(days);
-            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByUserIdSince(userId, since);
+            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByWorkspaceIdSince(workspaceId, since);
 
             if (snapshots.isEmpty()) {
                 return new AnalyticsOverviewResponse();
@@ -58,12 +60,6 @@ public class AnalyticsApiService {
                     ? (double) totalEngagements / totalImpressions * 100.0
                     : 0.0;
 
-            // Follower growth: sum net change across all account snapshots in window
-            Set<String> providerUserIds = snapshots.stream()
-                    .map(PostAnalyticsSnapshotEntity::getProviderPostId)
-                    .collect(Collectors.toSet());
-
-            // Distinct providerUserIds from posts that own these snapshots
             List<Long> postIds = snapshots.stream()
                     .map(PostAnalyticsSnapshotEntity::getPostId)
                     .distinct()
@@ -85,7 +81,7 @@ public class AnalyticsApiService {
                     totalShares, totalVideoViews, followerGrowth, totalPosts, avgEngagementRate);
 
         } catch (Exception e) {
-            log.error("Error computing analytics overview for userId={}", userId, e);
+            log.error("Error computing analytics overview for workspaceId={}", WorkspaceContext.getWorkspaceId(), e);
             return new AnalyticsOverviewResponse();
         }
     }
@@ -96,18 +92,17 @@ public class AnalyticsApiService {
 
     public List<PlatformStatsResponse> getPlatformStats(String userId, int days) {
         try {
+            String workspaceId = WorkspaceContext.getWorkspaceId();
             OffsetDateTime since = OffsetDateTime.now(ZoneOffset.UTC).minusDays(days);
-            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByUserIdSince(userId, since);
+            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByWorkspaceIdSince(workspaceId, since);
 
             if (snapshots.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            // Group snapshots by provider
             Map<String, List<PostAnalyticsSnapshotEntity>> byProvider = snapshots.stream()
                     .collect(Collectors.groupingBy(PostAnalyticsSnapshotEntity::getProvider));
 
-            // Load posts to gather providerUserIds per provider for follower growth
             List<Long> postIds = snapshots.stream()
                     .map(PostAnalyticsSnapshotEntity::getPostId)
                     .distinct()
@@ -155,7 +150,7 @@ public class AnalyticsApiService {
             return result;
 
         } catch (Exception e) {
-            log.error("Error computing platform stats for userId={}", userId, e);
+            log.error("Error computing platform stats for workspaceId={}", WorkspaceContext.getWorkspaceId(), e);
             return Collections.emptyList();
         }
     }
@@ -166,9 +161,10 @@ public class AnalyticsApiService {
 
     public List<TopPostResponse> getTopPosts(String userId, int days, String snapshotType) {
         try {
+            String workspaceId = WorkspaceContext.getWorkspaceId();
             OffsetDateTime since = OffsetDateTime.now(ZoneOffset.UTC).minusDays(days);
             List<PostAnalyticsSnapshotEntity> snapshots =
-                    postAnalyticsSnapshotRepo.findTopPostsByUserIdAndSnapshotType(userId, snapshotType, since);
+                    postAnalyticsSnapshotRepo.findTopPostsByWorkspaceIdAndSnapshotType(workspaceId, snapshotType, since);
 
             if (snapshots.isEmpty()) {
                 return Collections.emptyList();
@@ -190,7 +186,6 @@ public class AnalyticsApiService {
 
                 if (post != null) {
                     publishedAt = post.getScheduledTime();
-                    // Load collection for description via a separate fetch
                     try {
                         PostEntity fullPost = postRepo.findPostWithCollectionAndMedia(post.getId());
                         if (fullPost != null && fullPost.getPostCollection() != null) {
@@ -227,7 +222,7 @@ public class AnalyticsApiService {
             return result;
 
         } catch (Exception e) {
-            log.error("Error fetching top posts for userId={}", userId, e);
+            log.error("Error fetching top posts for workspaceId={}", WorkspaceContext.getWorkspaceId(), e);
             return Collections.emptyList();
         }
     }
@@ -238,8 +233,9 @@ public class AnalyticsApiService {
 
     public List<TimelinePointResponse> getTimeline(String userId, int days) {
         try {
+            String workspaceId = WorkspaceContext.getWorkspaceId();
             OffsetDateTime since = OffsetDateTime.now(ZoneOffset.UTC).minusDays(days);
-            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByUserIdSince(userId, since);
+            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByWorkspaceIdSince(workspaceId, since);
 
             if (snapshots.isEmpty()) {
                 return Collections.emptyList();
@@ -247,13 +243,11 @@ public class AnalyticsApiService {
 
             DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-            // Group by (date, provider)
             Map<String, Map<String, Long>> grouped = new LinkedHashMap<>();
             for (PostAnalyticsSnapshotEntity s : snapshots) {
                 if (s.getFetchedAt() == null) continue;
                 String date = s.getFetchedAt().atZoneSameInstant(ZoneOffset.UTC).format(fmt);
                 String provider = s.getProvider();
-                String key = date + "|" + provider;
 
                 long engagements = coalesce(s.getLikes()) + coalesce(s.getComments()) + coalesce(s.getShares());
 
@@ -274,7 +268,7 @@ public class AnalyticsApiService {
             return result;
 
         } catch (Exception e) {
-            log.error("Error computing timeline for userId={}", userId, e);
+            log.error("Error computing timeline for workspaceId={}", WorkspaceContext.getWorkspaceId(), e);
             return Collections.emptyList();
         }
     }
@@ -285,9 +279,9 @@ public class AnalyticsApiService {
 
     public List<HeatmapCellResponse> getHeatmap(String userId) {
         try {
-            // Use all-time snapshots for heatmap (no time window)
+            String workspaceId = WorkspaceContext.getWorkspaceId();
             OffsetDateTime since = OffsetDateTime.now(ZoneOffset.UTC).minusDays(365);
-            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByUserIdSince(userId, since);
+            List<PostAnalyticsSnapshotEntity> snapshots = postAnalyticsSnapshotRepo.findByWorkspaceIdSince(workspaceId, since);
 
             if (snapshots.isEmpty()) {
                 return Collections.emptyList();
@@ -301,8 +295,6 @@ public class AnalyticsApiService {
             Map<Long, PostEntity> postMap = posts.stream()
                     .collect(Collectors.toMap(PostEntity::getId, p -> p));
 
-            // Build a map: postId -> first snapshot engagements (avoid double-counting per post)
-            // Use the latest snapshot per post to get best data
             Map<Long, PostAnalyticsSnapshotEntity> latestPerPost = new LinkedHashMap<>();
             for (PostAnalyticsSnapshotEntity s : snapshots) {
                 latestPerPost.merge(s.getPostId(), s, (existing, incoming) -> {
@@ -312,8 +304,6 @@ public class AnalyticsApiService {
                 });
             }
 
-            // Group by (dayOfWeek, hourOfDay) using the post's scheduledTime
-            // dayOfWeek: 1=Monday...7=Sunday per ISO-8601
             Map<String, List<Long>> cellEngagements = new LinkedHashMap<>();
             for (Map.Entry<Long, PostAnalyticsSnapshotEntity> entry : latestPerPost.entrySet()) {
                 Long postId = entry.getKey();
@@ -323,7 +313,7 @@ public class AnalyticsApiService {
                 if (post == null || post.getScheduledTime() == null) continue;
 
                 OffsetDateTime scheduledTime = post.getScheduledTime().withOffsetSameInstant(ZoneOffset.UTC);
-                int dow  = scheduledTime.getDayOfWeek().getValue(); // 1=Mon, 7=Sun
+                int dow  = scheduledTime.getDayOfWeek().getValue();
                 int hour = scheduledTime.getHour();
 
                 long engagements = coalesce(s.getLikes()) + coalesce(s.getComments()) + coalesce(s.getShares());
@@ -347,7 +337,7 @@ public class AnalyticsApiService {
             return result;
 
         } catch (Exception e) {
-            log.error("Error computing heatmap for userId={}", userId, e);
+            log.error("Error computing heatmap for workspaceId={}", WorkspaceContext.getWorkspaceId(), e);
             return Collections.emptyList();
         }
     }
@@ -366,7 +356,6 @@ public class AnalyticsApiService {
                             providerUserIds, fromDate, toDate);
             if (accountSnaps.isEmpty()) return 0L;
 
-            // For each providerUserId, compute last - first followers
             Map<String, List<AccountAnalyticsSnapshotEntity>> byPuid = accountSnaps.stream()
                     .collect(Collectors.groupingBy(AccountAnalyticsSnapshotEntity::getProviderUserId));
 

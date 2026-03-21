@@ -4,6 +4,7 @@ import com.ghouse.socialraven.constant.Platform;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.service.account_profile.AccountProfileService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,42 +31,24 @@ public class AccountProfileController {
     public List<ConnectedAccount> getConnectedAccounts(
             @RequestParam(value = "platform", required = false) Platform platform
     ) {
-        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        List<ConnectedAccount> connectedAccounts = new ArrayList<>();
+        String workspaceId = WorkspaceContext.getWorkspaceId();
         if (platform == null) {
-            connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+            return accountProfileService.getAllConnectedAccounts(workspaceId);
         } else {
-            connectedAccounts = accountProfileService.getConnectedAccounts(userId, platform);
+            return accountProfileService.getConnectedAccounts(workspaceId, platform);
         }
-
-//        List<ConnectedAccount> duplicates = new ArrayList<>();
-//
-//        for (ConnectedAccount acc : connectedAccounts) {
-//            for (int i = 0; i < 10; i++) {
-//                ConnectedAccount copy = new ConnectedAccount();
-//                BeanUtils.copyProperties(acc, copy);  // deep copy fields
-//                copy.setProviderUserId(UUID.randomUUID().toString()); // unique ID
-//                duplicates.add(copy);
-//            }
-//        }
-
-        return connectedAccounts;
     }
-
 
     @GetMapping("/connected/all")
     public List<ConnectedAccount> getAllConnectedAccounts() {
-        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
-        return connectedAccounts;
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        return accountProfileService.getAllConnectedAccounts(workspaceId);
     }
 
     @GetMapping("/connected/delete/{providerUserId}")
     public String deleteConnectedAccount(@PathVariable String providerUserId) {
-        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        accountProfileService.deleteConnectedAccount(userId, providerUserId);
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        accountProfileService.deleteConnectedAccount(workspaceId, providerUserId);
         return "SUCCESS";
     }
-
-
 }

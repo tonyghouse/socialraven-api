@@ -8,6 +8,7 @@ import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.repo.OAuthInfoRepo;
 import com.ghouse.socialraven.repo.PlanConfigRepo;
 import com.ghouse.socialraven.repo.PostCollectionRepo;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -36,17 +37,17 @@ public class UsageService {
         PlanConfigEntity config = planConfigRepo.findById(planEntity.getPlanType())
                 .orElseThrow(() -> new SocialRavenException("Plan config not found", HttpStatus.INTERNAL_SERVER_ERROR));
 
-        // First day of the current calendar month (UTC)
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+
         OffsetDateTime startOfMonth = OffsetDateTime.now(ZoneOffset.UTC)
                 .withDayOfMonth(1)
                 .withHour(0).withMinute(0).withSecond(0).withNano(0);
 
         long postsUsed = postCollectionRepo.countNonDraftPostsFromMonth(
-                userId, PostCollectionStatus.DRAFT, startOfMonth);
+                workspaceId, PostCollectionStatus.DRAFT, startOfMonth);
 
-        long accountsCount = oAuthInfoRepo.findAllByUserId(userId).size();
+        long accountsCount = oAuthInfoRepo.findAllByWorkspaceId(workspaceId).size();
 
-        // Effective limits: custom override takes precedence over plan config default
         Integer postsLimit    = planEntity.getCustomPostsLimit()    != null ? planEntity.getCustomPostsLimit()    : config.getPostsPerMonth();
         Integer accountsLimit = planEntity.getCustomAccountsLimit() != null ? planEntity.getCustomAccountsLimit() : config.getAccountsLimit();
 

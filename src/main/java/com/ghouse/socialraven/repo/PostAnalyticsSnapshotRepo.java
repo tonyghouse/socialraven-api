@@ -18,25 +18,25 @@ public interface PostAnalyticsSnapshotRepo extends JpaRepository<PostAnalyticsSn
         SELECT s.* FROM socialraven.post_analytics_snapshots s
         JOIN socialraven.post p ON s.post_id = p.id
         JOIN socialraven.post_collection pc ON p.post_collection_id = pc.id
-        WHERE pc.user_id = :userId
+        WHERE pc.workspace_id = :workspaceId
           AND s.fetched_at >= :since
         ORDER BY s.fetched_at DESC
         """, nativeQuery = true)
-    List<PostAnalyticsSnapshotEntity> findByUserIdSince(
-            @Param("userId") String userId,
+    List<PostAnalyticsSnapshotEntity> findByWorkspaceIdSince(
+            @Param("workspaceId") String workspaceId,
             @Param("since") OffsetDateTime since);
 
     @Query(value = """
         SELECT s.* FROM socialraven.post_analytics_snapshots s
         JOIN socialraven.post p ON s.post_id = p.id
         JOIN socialraven.post_collection pc ON p.post_collection_id = pc.id
-        WHERE pc.user_id = :userId
+        WHERE pc.workspace_id = :workspaceId
           AND s.snapshot_type = :snapshotType
           AND s.fetched_at >= :since
         ORDER BY (COALESCE(s.likes,0) + COALESCE(s.comments,0) + COALESCE(s.shares,0)) DESC
         """, nativeQuery = true)
-    List<PostAnalyticsSnapshotEntity> findTopPostsByUserIdAndSnapshotType(
-            @Param("userId") String userId,
+    List<PostAnalyticsSnapshotEntity> findTopPostsByWorkspaceIdAndSnapshotType(
+            @Param("workspaceId") String workspaceId,
             @Param("snapshotType") String snapshotType,
             @Param("since") OffsetDateTime since);
 }

@@ -15,6 +15,9 @@ public class SecurityConfig {
     @Autowired
     private ClerkAuthenticationFilter clerkAuthenticationFilter;
 
+    @Autowired
+    private WorkspaceAccessFilter workspaceAccessFilter;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
@@ -32,7 +35,9 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(clerkAuthenticationFilter,
-                        UsernamePasswordAuthenticationFilter.class);
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(workspaceAccessFilter,
+                        ClerkAuthenticationFilter.class);
 
         return http.build();
     }

@@ -18,6 +18,7 @@ import com.ghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.ghouse.socialraven.entity.PostCollectionEntity;
 import com.ghouse.socialraven.entity.PostEntity;
 import com.ghouse.socialraven.entity.PostMediaEntity;
+import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.helper.PostPoolHelper;
 import com.ghouse.socialraven.mapper.PostTypeMapper;
 import com.ghouse.socialraven.mapper.ProviderPlatformMapper;
@@ -27,6 +28,7 @@ import com.ghouse.socialraven.repo.PostRepo;
 import com.ghouse.socialraven.service.account_profile.AccountProfileService;
 import com.ghouse.socialraven.service.storage.StorageService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -42,6 +44,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,7 +84,6 @@ public class PostService {
         boolean isDraft = postCollectionReq.isDraft();
         List<ConnectedAccount> connectedAccounts = postCollectionReq.getConnectedAccounts();
 
-        // Drafts may have no accounts (user picks them later); scheduled posts require at least one
         if (!isDraft && CollectionUtils.isEmpty(connectedAccounts)) {
             throw new RuntimeException("Select connected accounts for post collection");
         }
@@ -89,10 +91,13 @@ public class PostService {
         PostCollectionEntity postCollection = new PostCollectionEntity();
 
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+
         postCollection.setPostCollectionStatus(isDraft ? PostCollectionStatus.DRAFT : PostCollectionStatus.SCHEDULED);
         PostCollectionType postType = postCollectionReq.getPostType();
         postCollection.setPostCollectionType(postType);
-        postCollection.setUserId(userId);
+        postCollection.setCreatedBy(userId);
+        postCollection.setWorkspaceId(workspaceId);
         postCollection.setTitle(postCollectionReq.getTitle() != null ? postCollectionReq.getTitle() : "");
         postCollection.setDescription(postCollectionReq.getDescription() != null ? postCollectionReq.getDescription() : "");
         OffsetDateTime scheduledTime = postCollectionReq.getScheduledTime();
@@ -137,7 +142,6 @@ public class PostService {
 
         PostCollectionEntity savedPost = postCollectionRepo.save(postCollection);
 
-        // Only add to Redis scheduling pool for non-draft posts
         if (!isDraft) {
             List<PostEntity> posts = savedPost.getPosts();
             for (PostEntity post : posts) {
@@ -149,7 +153,7 @@ public class PostService {
                 }
             }
         } else {
-            log.info("Draft saved: collectionId={}, userId={}", savedPost.getId(), userId);
+            log.info("Draft saved: collectionId={}, workspaceId={}", savedPost.getId(), workspaceId);
         }
 
         return postCollectionReq;
@@ -157,20 +161,19 @@ public class PostService {
 
     @Transactional
     public PostCollectionResponse scheduleDraftCollection(String userId, Long collectionId, ScheduleDraftRequest req) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
         PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
-                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
-                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!collection.getUserId().equals(userId)) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+                .orElseThrow(() -> new SocialRavenException(
+                        "Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
         if (collection.getPostCollectionStatus() != PostCollectionStatus.DRAFT) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Collection is not a draft", org.springframework.http.HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException("Collection is not a draft", HttpStatus.BAD_REQUEST);
         }
         if (CollectionUtils.isEmpty(collection.getPosts())) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Select at least one connected account before scheduling", org.springframework.http.HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException(
+                    "Select at least one connected account before scheduling", HttpStatus.BAD_REQUEST);
         }
 
         OffsetDateTime scheduledTime = req.getScheduledTime();
@@ -192,108 +195,21 @@ public class PostService {
             }
         }
 
-        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
         Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostCollectionResponse(saved, connectedAccountMap);
     }
 
-
-
-    public Page<PostResponse> getUserPosts(String userId, int page, PostStatus postStatus) {
-        Pageable pageable;
-        if (page == -1) {
-            pageable = Pageable.unpaged();   // fetch all
-        } else {
-            pageable = PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
-        }
-
-
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
-
-        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-
-
-        Page<PostEntity> postsPage = postRepo.findByPostCollectionUserIdAndPostStatus(userId, postStatus, pageable);
-        return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
-    }
-
-    private PostResponse getPostResponse(PostEntity post, Map<String, ConnectedAccount> connectedAccountMap) {
-        PostCollectionEntity postCollection = post.getPostCollection();
-
-        ConnectedAccount connectedAccount = connectedAccountMap.get(post.getProviderUserId());
-        List<PostMediaEntity> mediaList = postCollection.getMediaFiles();
-
-
-        List<MediaResponse> mediaDtos =
-                mediaList.stream().map(m ->
-                        new MediaResponse(
-                                m.getId(),
-                                m.getFileName(),
-                                m.getMimeType(),
-                                m.getSize(),
-                                storageService.generatePresignedGetUrl(m.getFileKey(), Duration.ofMinutes(10)),
-                                m.getFileKey()
-                        )
-                ).toList();
-
-        return new PostResponse(
-                post.getId(),
-                postCollection.getId(),
-                connectedAccount!=null? ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()) : null,
-                postCollection.getTitle(),
-                postCollection.getDescription(),
-                post.getPostStatus().toString(),
-                post.getScheduledTime(),
-                mediaDtos,
-                connectedAccount
-        );
-    }
-
-    public Page<PostResponse> getUserPosts(String userId) {
-        Pageable pageable = Pageable.unpaged();
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
-
-        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-
-        Page<PostEntity> postsPage = postRepo.findByPostCollectionUserId(userId, pageable);
-        return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
-    }
-
-    public PostResponse getPostById(String userId, Long postId) {
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
-
-        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-
-
-        PostEntity post = postRepo.findById(postId).orElse(null);
-        if(post == null){
-            throw new RuntimeException("Post not found");
-        }
-
-        return getPostResponse(post, connectedAccountMap);
-    }
-
-    public void deletePostById(String userId, Long postId) {
-        try (Jedis jedis = jedisPool.getResource()) {
-            jedis.zrem(PostPoolHelper.getPostsPoolName(), postId.toString());
-        }
-        postRepo.deleteById(postId);
-    }
-
     @Transactional
     public void deletePostCollection(String userId, Long collectionId) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
         PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
-                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
-                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!collection.getUserId().equals(userId)) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+                .orElseThrow(() -> new SocialRavenException(
+                        "Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        // Remove all contained posts from the Redis scheduling pool
         List<PostEntity> posts = collection.getPosts();
         if (posts != null && !posts.isEmpty()) {
             try (Jedis jedis = jedisPool.getResource()) {
@@ -304,20 +220,19 @@ public class PostService {
             }
         }
         postCollectionRepo.delete(collection);
-        log.info("Deleted post collection id={} for userId={}", collectionId, userId);
+        log.info("Deleted post collection id={} for workspaceId={}", collectionId, workspaceId);
     }
 
     @Transactional
     public PostCollectionResponse updatePostCollection(String userId, Long collectionId, UpdatePostCollectionRequest req) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
         PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
-                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
-                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!collection.getUserId().equals(userId)) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+                .orElseThrow(() -> new SocialRavenException(
+                        "Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
 
-        // --- Basic fields ---
         if (req.getTitle() != null) {
             collection.setTitle(req.getTitle());
         }
@@ -325,7 +240,6 @@ public class PostService {
             collection.setDescription(req.getDescription());
         }
 
-        // Resolve final scheduledTime (may come from request or stay as-is)
         final OffsetDateTime scheduledTime = req.getScheduledTime() != null
                 ? req.getScheduledTime()
                 : collection.getScheduledTime();
@@ -333,7 +247,6 @@ public class PostService {
             collection.setScheduledTime(scheduledTime);
         }
 
-        // --- Platform configs ---
         if (req.getPlatformConfigs() != null) {
             try {
                 collection.setPlatformConfigs(objectMapper.writeValueAsString(req.getPlatformConfigs()));
@@ -342,12 +255,10 @@ public class PostService {
             }
         }
 
-        // --- Media replacement ---
         if (req.getKeepMediaKeys() != null || req.getNewMedia() != null) {
             List<String> keepKeys = req.getKeepMediaKeys() != null ? req.getKeepMediaKeys() : List.of();
             List<PostMediaEntity> updatedMedia = new ArrayList<>();
 
-            // Retain only the existing media files whose keys are in keepKeys
             if (collection.getMediaFiles() != null) {
                 updatedMedia.addAll(
                         collection.getMediaFiles().stream()
@@ -356,7 +267,6 @@ public class PostService {
                 );
             }
 
-            // Append newly uploaded media
             if (req.getNewMedia() != null) {
                 for (PostMedia dto : req.getNewMedia()) {
                     PostMediaEntity entity = new PostMediaEntity();
@@ -369,12 +279,10 @@ public class PostService {
                 }
             }
 
-            // Replace via clear+addAll — orphanRemoval handles DB deletion of removed items
             collection.getMediaFiles().clear();
             collection.getMediaFiles().addAll(updatedMedia);
         }
 
-        // --- Connected accounts update ---
         List<String> newlyAddedProviderUserIds = new ArrayList<>();
         if (req.getConnectedAccounts() != null) {
             List<ConnectedAccount> requestedAccounts = req.getConnectedAccounts();
@@ -386,7 +294,6 @@ public class PostService {
                     ? collection.getPosts().stream().map(PostEntity::getProviderUserId).collect(Collectors.toSet())
                     : Set.of();
 
-            // Remove posts for accounts no longer in the requested list
             List<String> removedPostRedisKeys = new ArrayList<>();
             Iterator<PostEntity> iter = collection.getPosts().iterator();
             while (iter.hasNext()) {
@@ -395,7 +302,7 @@ public class PostService {
                     if (post.getPostStatus() == PostStatus.SCHEDULED && post.getId() != null) {
                         removedPostRedisKeys.add(post.getId().toString());
                     }
-                    iter.remove(); // orphanRemoval deletes from DB on save
+                    iter.remove();
                 }
             }
             if (!removedPostRedisKeys.isEmpty()) {
@@ -405,7 +312,6 @@ public class PostService {
                 log.info("Removed {} posts from Redis pool on account update", removedPostRedisKeys.size());
             }
 
-            // Add posts for newly added accounts
             PostCollectionType postType = collection.getPostCollectionType();
             boolean collectionIsDraft = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT;
             for (ConnectedAccount account : requestedAccounts) {
@@ -425,7 +331,6 @@ public class PostService {
             }
         }
 
-        // --- Update scheduledTime + Redis for existing SCHEDULED posts ---
         if (req.getScheduledTime() != null && collection.getPosts() != null) {
             long newEpochMillis = scheduledTime.toInstant().toEpochMilli();
             try (Jedis jedis = jedisPool.getResource()) {
@@ -438,10 +343,8 @@ public class PostService {
             }
         }
 
-        // Save — also assigns IDs to newly added posts
         PostCollectionEntity saved = postCollectionRepo.save(collection);
 
-        // Add newly created posts to Redis now that they have IDs
         if (!newlyAddedProviderUserIds.isEmpty()) {
             final long epochMillis = scheduledTime.toInstant().toEpochMilli();
             try (Jedis jedis = jedisPool.getResource()) {
@@ -455,7 +358,7 @@ public class PostService {
             }
         }
 
-        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
         Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostCollectionResponse(saved, connectedAccountMap);
@@ -463,14 +366,14 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public PostCollectionResponse getPostCollectionById(String userId, Long id) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
         PostCollectionEntity collection = postCollectionRepo.findById(id)
-                .orElseThrow(() -> new com.ghouse.socialraven.exception.SocialRavenException(
-                        "Post collection not found", org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!collection.getUserId().equals(userId)) {
-            throw new com.ghouse.socialraven.exception.SocialRavenException(
-                    "Access denied", org.springframework.http.HttpStatus.FORBIDDEN);
+                .orElseThrow(() -> new SocialRavenException(
+                        "Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostCollectionResponse(collection, connectedAccountMap);
@@ -480,12 +383,14 @@ public class PostService {
     public Page<PostCollectionResponse> getUserPostCollections(
             String userId, int page, String type, String search, List<String> providerUserIds,
             String platform, String sortDir, String dateRange) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+
         Sort sort = "asc".equalsIgnoreCase(sortDir)
                 ? Sort.by("scheduledTime").ascending()
                 : Sort.by("scheduledTime").descending();
         Pageable pageable = PageRequest.of(page, 12, sort);
 
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(userId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
@@ -494,7 +399,6 @@ public class PostService {
                 : null;
         boolean hasAccountFilter = !CollectionUtils.isEmpty(providerUserIds);
 
-        // Platform: convert to uppercase enum name string (e.g. "INSTAGRAM"), null if not set
         String platformStr = null;
         if (platform != null && !platform.isBlank()) {
             try {
@@ -503,9 +407,6 @@ public class PostService {
         }
         boolean hasPlatformFilter = platformStr != null;
 
-        // Always non-null: PostgreSQL JDBC can't infer the type of a NULL OffsetDateTime
-        // parameter in "? IS NULL" expressions. Sentinel values cover the full date range
-        // when no period filter is selected.
         OffsetDateTime fromDate = OffsetDateTime.of(2000, 1, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
         OffsetDateTime toDate   = OffsetDateTime.of(2100, 1, 1, 0, 0, 0, 0, java.time.ZoneOffset.UTC);
         if (dateRange != null) {
@@ -533,30 +434,30 @@ public class PostService {
         if ("scheduled".equalsIgnoreCase(type)) {
             if (hasAccountFilter && hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findScheduledCollectionsWithAccountsAndPlatform(
-                        userId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
             } else if (hasAccountFilter) {
                 collectionsPage = postCollectionRepo.findScheduledCollectionsWithAccounts(
-                        userId, searchPattern, providerUserIds, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, providerUserIds, fromDate, toDate, pageable);
             } else if (hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findScheduledCollectionsByPlatform(
-                        userId, searchPattern, platformStr, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, platformStr, fromDate, toDate, pageable);
             } else {
                 collectionsPage = postCollectionRepo.findScheduledCollections(
-                        userId, searchPattern, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, fromDate, toDate, pageable);
             }
         } else if ("published".equalsIgnoreCase(type)) {
             if (hasAccountFilter && hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findPublishedCollectionsWithAccountsAndPlatform(
-                        userId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
             } else if (hasAccountFilter) {
                 collectionsPage = postCollectionRepo.findPublishedCollectionsWithAccounts(
-                        userId, searchPattern, providerUserIds, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, providerUserIds, fromDate, toDate, pageable);
             } else if (hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findPublishedCollectionsByPlatform(
-                        userId, searchPattern, platformStr, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, platformStr, fromDate, toDate, pageable);
             } else {
                 collectionsPage = postCollectionRepo.findPublishedCollections(
-                        userId, searchPattern, fromDate, toDate, pageable);
+                        workspaceId, searchPattern, fromDate, toDate, pageable);
             }
         } else if ("draft".equalsIgnoreCase(type)) {
             Sort draftSort = "asc".equalsIgnoreCase(sortDir)
@@ -565,13 +466,13 @@ public class PostService {
             Pageable draftPageable = PageRequest.of(page, 12, draftSort);
             if (hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findDraftCollectionsByPlatform(
-                        userId, searchPattern, platformStr, draftPageable);
+                        workspaceId, searchPattern, platformStr, draftPageable);
             } else {
                 collectionsPage = postCollectionRepo.findDraftCollections(
-                        userId, searchPattern, draftPageable);
+                        workspaceId, searchPattern, draftPageable);
             }
         } else {
-            collectionsPage = postCollectionRepo.findByUserIdOrderByScheduledTimeDesc(userId, pageable);
+            collectionsPage = postCollectionRepo.findByWorkspaceIdOrderByScheduledTimeDesc(workspaceId, pageable);
         }
         return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap));
     }
@@ -599,7 +500,6 @@ public class PostService {
                 ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap)).toList()
                 : List.of();
 
-        // Parse platformConfigs JSON string back to Map
         Map<String, Object> platformConfigsMap = null;
         if (collection.getPlatformConfigs() != null && !collection.getPlatformConfigs().isBlank()) {
             try {
@@ -609,7 +509,6 @@ public class PostService {
             }
         }
 
-        // Drafts report their own status rather than deriving from post states
         String overallStatus = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT
                 ? "DRAFT"
                 : deriveOverallStatus(posts);
@@ -627,18 +526,49 @@ public class PostService {
         );
     }
 
+    private PostResponse getPostResponse(PostEntity post, Map<String, ConnectedAccount> connectedAccountMap) {
+        PostCollectionEntity postCollection = post.getPostCollection();
+        ConnectedAccount connectedAccount = connectedAccountMap.get(post.getProviderUserId());
+        List<PostMediaEntity> mediaList = postCollection.getMediaFiles();
+
+        List<MediaResponse> mediaDtos =
+                mediaList.stream().map(m ->
+                        new MediaResponse(
+                                m.getId(),
+                                m.getFileName(),
+                                m.getMimeType(),
+                                m.getSize(),
+                                storageService.generatePresignedGetUrl(m.getFileKey(), Duration.ofMinutes(10)),
+                                m.getFileKey()
+                        )
+                ).toList();
+
+        return new PostResponse(
+                post.getId(),
+                postCollection.getId(),
+                connectedAccount != null ? ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()) : null,
+                postCollection.getTitle(),
+                postCollection.getDescription(),
+                post.getPostStatus().toString(),
+                post.getScheduledTime(),
+                mediaDtos,
+                connectedAccount
+        );
+    }
+
     @Transactional(readOnly = true)
     public List<CalendarPostResponse> getCalendarPosts(
             String userId,
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             List<String> providerUserIds) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
 
         List<PostEntity> posts;
         if (CollectionUtils.isEmpty(providerUserIds)) {
-            posts = postRepo.findCalendarPosts(userId, startTime, endTime);
+            posts = postRepo.findCalendarPosts(workspaceId, startTime, endTime);
         } else {
-            posts = postRepo.findCalendarPostsFiltered(userId, startTime, endTime, providerUserIds);
+            posts = postRepo.findCalendarPostsFiltered(workspaceId, startTime, endTime, providerUserIds);
         }
 
         return posts.stream()
@@ -670,5 +600,4 @@ public class PostService {
         if (failed == total) return "FAILED";
         return "PARTIAL_SUCCESS";
     }
-
 }
