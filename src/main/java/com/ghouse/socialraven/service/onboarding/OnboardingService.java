@@ -79,8 +79,13 @@ public class OnboardingService {
         UserType userType = request.getUserType();
 
         if (userType == UserType.AGENCY &&
-                (request.getWorkspaceName() == null || request.getWorkspaceName().isBlank())) {
-            throw new SocialRavenException("workspaceName is required for AGENCY accounts", HttpStatus.BAD_REQUEST);
+                (request.getWorkspaceNames() == null || request.getWorkspaceNames().isEmpty()
+                        || request.getWorkspaceNames().get(0).isBlank())) {
+            throw new SocialRavenException("At least one workspace name is required for AGENCY accounts", HttpStatus.BAD_REQUEST);
+        }
+
+        if (userType == UserType.AGENCY && request.getWorkspaceNames().size() > 10) {
+            throw new SocialRavenException("You can create at most 10 workspaces during onboarding", HttpStatus.BAD_REQUEST);
         }
 
         OffsetDateTime now = OffsetDateTime.now();
@@ -93,44 +98,59 @@ public class OnboardingService {
         profile.setUpdatedAt(now);
         userProfileRepo.save(profile);
 
-        // 2. Create first workspace
-        String workspaceId;
-        String workspaceName;
+        // 2. Determine workspace names to create
+        List<String> namesToCreate;
+        String firstWorkspaceId;
 
         if (userType == UserType.INFLUENCER) {
-            workspaceId = "personal_" + userId;
-            workspaceName = "main";
+            // Influencer always gets a single personal workspace
+            namesToCreate = List.of("main");
+            firstWorkspaceId = "personal_" + userId;
         } else {
-            workspaceId = UUID.randomUUID().toString();
-            workspaceName = request.getWorkspaceName().trim();
+            namesToCreate = request.getWorkspaceNames().stream()
+                    .map(String::trim)
+                    .filter(n -> !n.isBlank())
+                    .toList();
+            firstWorkspaceId = null; // will be set below
         }
 
-        WorkspaceEntity workspace = new WorkspaceEntity();
-        workspace.setId(workspaceId);
-        workspace.setName(workspaceName);
-        workspace.setCompanyName(request.getCompanyName() != null ? request.getCompanyName().trim() : null);
-        workspace.setOwnerUserId(userId);
-        workspace.setCreatedAt(now);
-        workspace.setUpdatedAt(now);
-        workspaceRepo.save(workspace);
+        String activeWorkspaceId = null;
 
-        // 3. Add OWNER membership
-        WorkspaceMemberEntity member = new WorkspaceMemberEntity();
-        member.setWorkspaceId(workspaceId);
-        member.setUserId(userId);
-        member.setRole(WorkspaceRole.OWNER);
-        member.setJoinedAt(now);
-        workspaceMemberRepo.save(member);
+        for (int i = 0; i < namesToCreate.size(); i++) {
+            String workspaceId = (userType == UserType.INFLUENCER)
+                    ? firstWorkspaceId
+                    : UUID.randomUUID().toString();
+            String workspaceName = namesToCreate.get(i);
 
-        // 4. Create default workspace settings
-        WorkspaceSettingsEntity settings = new WorkspaceSettingsEntity();
-        settings.setWorkspaceId(workspaceId);
-        settings.setDefaultTz("UTC");
-        settings.setUpdatedAt(now);
-        workspaceSettingsRepo.save(settings);
+            WorkspaceEntity workspace = new WorkspaceEntity();
+            workspace.setId(workspaceId);
+            workspace.setName(workspaceName);
+            workspace.setCompanyName(i == 0 && request.getCompanyName() != null
+                    ? request.getCompanyName().trim() : null);
+            workspace.setOwnerUserId(userId);
+            workspace.setCreatedAt(now);
+            workspace.setUpdatedAt(now);
+            workspaceRepo.save(workspace);
 
-        log.info("Onboarding completed for user {} as {} with workspace {}", userId, userType, workspaceId);
-        return new OnboardingStatusResponse(true, userType.name(), workspaceId);
+            WorkspaceMemberEntity member = new WorkspaceMemberEntity();
+            member.setWorkspaceId(workspaceId);
+            member.setUserId(userId);
+            member.setRole(WorkspaceRole.OWNER);
+            member.setJoinedAt(now);
+            workspaceMemberRepo.save(member);
+
+            WorkspaceSettingsEntity settings = new WorkspaceSettingsEntity();
+            settings.setWorkspaceId(workspaceId);
+            settings.setDefaultTz("UTC");
+            settings.setUpdatedAt(now);
+            workspaceSettingsRepo.save(settings);
+
+            if (i == 0) activeWorkspaceId = workspaceId;
+        }
+
+        log.info("Onboarding completed for user {} as {} with {} workspace(s), active={}",
+                userId, userType, namesToCreate.size(), activeWorkspaceId);
+        return new OnboardingStatusResponse(true, userType.name(), activeWorkspaceId);
     }
 
     /**

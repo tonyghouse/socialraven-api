@@ -2,6 +2,7 @@ package com.ghouse.socialraven.service.plan;
 
 import com.ghouse.socialraven.constant.PlanStatus;
 import com.ghouse.socialraven.constant.PlanType;
+import com.ghouse.socialraven.constant.UserType;
 import com.ghouse.socialraven.dto.plan.AdminPlanOverrideRequest;
 import com.ghouse.socialraven.dto.plan.ChangePlanRequest;
 import com.ghouse.socialraven.dto.plan.UserPlanResponse;
@@ -11,6 +12,7 @@ import com.ghouse.socialraven.entity.WorkspaceEntity;
 import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.repo.PlanConfigRepo;
 import com.ghouse.socialraven.repo.UserPlanRepo;
+import com.ghouse.socialraven.repo.UserProfileRepo;
 import com.ghouse.socialraven.repo.WorkspaceRepo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -32,6 +35,9 @@ public class UserPlanService {
 
     @Autowired
     private WorkspaceRepo workspaceRepo;
+
+    @Autowired
+    private UserProfileRepo userProfileRepo;
 
     /**
      * Returns the user's plan, auto-creating a 14-day TRIAL on first access.
@@ -64,7 +70,7 @@ public class UserPlanService {
 
         entity.setPlanType(newPlanType);
 
-        if (newPlanType == PlanType.TRIAL) {
+        if (newPlanType == PlanType.INFLUENCER_TRIAL || newPlanType == PlanType.AGENCY_TRIAL) {
             // Downgrading back to trial is not normally allowed; treat as ACTIVE trial
             entity.setStatus(PlanStatus.TRIALING);
             OffsetDateTime trialEnd = OffsetDateTime.now().plusDays(14);
@@ -89,7 +95,7 @@ public class UserPlanService {
 
     /**
      * Admin override — allows manually setting plan type, status, and custom limits
-     * for any user (e.g. enterprise customers with negotiated terms).
+     * for any user (e.g. agency customers with negotiated terms).
      */
     @Transactional
     public UserPlanResponse adminOverride(String targetUserId, AdminPlanOverrideRequest request) {
@@ -130,7 +136,7 @@ public class UserPlanService {
     @Transactional
     public UserPlanResponse getWorkspacePlan(String workspaceId) {
         WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        UserPlanEntity entity = getOrCreate(workspace.getOwnerUserId());
+        UserPlanEntity entity = getOrCreate(workspace.getOwnerUserId(), workspaceId);
         return toResponse(entity);
     }
 
@@ -160,20 +166,39 @@ public class UserPlanService {
 
     // ─── Internal helpers ────────────────────────────────────────────────────────
 
-    public UserPlanEntity getOrCreate(String userId) {
-        return userPlanRepo.findByUserId(userId).orElseGet(() -> createTrial(userId));
+    public UserPlanEntity getOrCreate(String userId, String workspaceId) {
+        return userPlanRepo.findByUserId(userId).orElseGet(() -> createTrial(userId, workspaceId));
     }
 
-    private UserPlanEntity createTrial(String userId) {
-        PlanConfigEntity trialConfig = planConfigRepo.findById(PlanType.TRIAL)
-                .orElseThrow(() -> new SocialRavenException("TRIAL plan config missing", HttpStatus.INTERNAL_SERVER_ERROR));
+    public UserPlanEntity getOrCreate(String userId) {
+        return userPlanRepo.findByUserId(userId).orElseGet(() -> {
+            List<WorkspaceEntity> owned = workspaceRepo.findAllByOwnerUserIdAndDeletedAtIsNull(userId);
+            String workspaceId = owned.isEmpty() ? null : owned.get(0).getId();
+            return createTrial(userId, workspaceId);
+        });
+    }
+
+    private UserPlanEntity createTrial(String userId, String workspaceId) {
+        if (workspaceId == null) {
+            throw new SocialRavenException(
+                    "Cannot create trial plan: no workspace found for user " + userId,
+                    HttpStatus.BAD_REQUEST);
+        }
+
+        PlanType trialPlanType = userProfileRepo.findById(userId)
+                .map(profile -> profile.getUserType() == UserType.AGENCY ? PlanType.AGENCY_TRIAL : PlanType.INFLUENCER_TRIAL)
+                .orElse(PlanType.INFLUENCER_TRIAL);
+
+        PlanConfigEntity trialConfig = planConfigRepo.findById(trialPlanType)
+                .orElseThrow(() -> new SocialRavenException(trialPlanType + " plan config missing", HttpStatus.INTERNAL_SERVER_ERROR));
 
         OffsetDateTime now = OffsetDateTime.now();
         OffsetDateTime trialEnd = now.plusDays(trialConfig.getTrialDays() != null ? trialConfig.getTrialDays() : 14);
 
         UserPlanEntity entity = new UserPlanEntity();
         entity.setUserId(userId);
-        entity.setPlanType(PlanType.TRIAL);
+        entity.setWorkspaceId(workspaceId);
+        entity.setPlanType(trialPlanType);
         entity.setStatus(PlanStatus.TRIALING);
         entity.setRenewalDate(trialEnd);
         entity.setTrialEndsAt(trialEnd);
@@ -182,7 +207,7 @@ public class UserPlanService {
         entity.setUpdatedAt(now);
 
         userPlanRepo.save(entity);
-        log.info("Created TRIAL plan for new user {}", userId);
+        log.info("Created {} plan for new user {} in workspace {}", trialPlanType, userId, workspaceId);
         return entity;
     }
 

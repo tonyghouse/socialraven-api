@@ -14,6 +14,9 @@ public class AnalyticsJobEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "workspace_id", nullable = false)
+    private String workspaceId;
+
     @Column(name = "post_id", nullable = false)
     private Long postId;
 

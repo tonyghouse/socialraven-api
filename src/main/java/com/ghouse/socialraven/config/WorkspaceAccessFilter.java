@@ -41,7 +41,7 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
         // Skip workspace management endpoints — they don't use WorkspaceContext and handle
         // their own access control. Also skip public/admin routes and preflight requests.
         return path.startsWith("/public/") || path.startsWith("/admin/")
-                || path.startsWith("/workspaces")
+                || path.startsWith("/workspaces") || path.startsWith("/onboarding")
                 || "OPTIONS".equalsIgnoreCase(request.getMethod());
     }
 

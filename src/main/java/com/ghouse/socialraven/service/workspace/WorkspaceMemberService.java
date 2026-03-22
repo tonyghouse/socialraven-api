@@ -5,6 +5,7 @@ import com.ghouse.socialraven.dto.workspace.MemberResponse;
 import com.ghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.repo.WorkspaceMemberRepo;
+import com.ghouse.socialraven.service.ClerkUserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -21,14 +22,27 @@ public class WorkspaceMemberService {
     @Autowired
     private WorkspaceMemberRepo memberRepo;
 
+    @Autowired
+    private ClerkUserService clerkUserService;
+
     /**
-     * Returns all members of the workspace.
+     * Returns all members of the workspace, enriched with Clerk profile data.
      * Caller must be ADMIN+ (enforced in controller).
      */
     public List<MemberResponse> getMembers(String workspaceId) {
         return memberRepo.findAllByWorkspaceId(workspaceId)
                 .stream()
-                .map(m -> new MemberResponse(m.getUserId(), m.getRole(), m.getJoinedAt()))
+                .map(m -> {
+                    ClerkUserService.UserProfile profile = clerkUserService.getUserProfile(m.getUserId());
+                    return new MemberResponse(
+                            m.getUserId(),
+                            m.getRole(),
+                            m.getJoinedAt(),
+                            profile != null ? profile.firstName() : null,
+                            profile != null ? profile.lastName() : null,
+                            profile != null ? profile.email() : null
+                    );
+                })
                 .collect(Collectors.toList());
     }
 
@@ -70,7 +84,11 @@ public class WorkspaceMemberService {
         target.setRole(newRole);
         memberRepo.save(target);
         log.info("Member role updated: workspaceId={}, userId={}, newRole={}", workspaceId, targetUserId, newRole);
-        return new MemberResponse(target.getUserId(), target.getRole(), target.getJoinedAt());
+        ClerkUserService.UserProfile profile = clerkUserService.getUserProfile(target.getUserId());
+        return new MemberResponse(target.getUserId(), target.getRole(), target.getJoinedAt(),
+                profile != null ? profile.firstName() : null,
+                profile != null ? profile.lastName() : null,
+                profile != null ? profile.email() : null);
     }
 
     /**

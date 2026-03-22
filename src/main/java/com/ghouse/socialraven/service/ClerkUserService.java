@@ -26,11 +26,22 @@ public class ClerkUserService {
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    public record UserProfile(String firstName, String lastName, String email) {}
+
     /**
      * Returns the primary email address of the Clerk user with the given ID.
      * Returns null if the user cannot be found or has no email.
      */
     public String getUserEmail(String clerkUserId) {
+        UserProfile profile = getUserProfile(clerkUserId);
+        return profile != null ? profile.email() : null;
+    }
+
+    /**
+     * Returns firstName, lastName, and primary email for the given Clerk user ID.
+     * Returns null if the user cannot be found.
+     */
+    public UserProfile getUserProfile(String clerkUserId) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(CLERK_API + clerkUserId))
@@ -47,22 +58,27 @@ public class ClerkUserService {
             }
 
             JsonNode root = objectMapper.readTree(response.body());
+            String firstName = root.path("first_name").asText(null);
+            String lastName = root.path("last_name").asText(null);
             String primaryEmailId = root.path("primary_email_address_id").asText(null);
 
+            String email = null;
             JsonNode emailAddresses = root.path("email_addresses");
             if (emailAddresses.isArray()) {
                 for (JsonNode emailNode : emailAddresses) {
                     if (primaryEmailId != null && primaryEmailId.equals(emailNode.path("id").asText(null))) {
-                        return emailNode.path("email_address").asText(null);
+                        email = emailNode.path("email_address").asText(null);
+                        break;
                     }
                 }
-                // Fallback: return first email if no primary match
-                if (emailAddresses.size() > 0) {
-                    return emailAddresses.get(0).path("email_address").asText(null);
+                if (email == null && emailAddresses.size() > 0) {
+                    email = emailAddresses.get(0).path("email_address").asText(null);
                 }
             }
+
+            return new UserProfile(firstName, lastName, email);
         } catch (Exception e) {
-            log.error("Error fetching Clerk user email for userId={}: {}", clerkUserId, e.getMessage(), e);
+            log.error("Error fetching Clerk user profile for userId={}: {}", clerkUserId, e.getMessage(), e);
         }
         return null;
     }

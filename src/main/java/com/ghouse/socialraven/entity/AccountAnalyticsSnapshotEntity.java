@@ -15,6 +15,9 @@ public class AccountAnalyticsSnapshotEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "workspace_id", nullable = false)
+    private String workspaceId;
+
     @Column(name = "provider_user_id", nullable = false)
     private String providerUserId;
 

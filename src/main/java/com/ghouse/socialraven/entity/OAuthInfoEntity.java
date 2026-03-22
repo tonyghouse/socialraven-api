@@ -2,10 +2,10 @@ package com.ghouse.socialraven.entity;
 
 import com.ghouse.socialraven.constant.Provider;
 import com.ghouse.socialraven.model.AdditionalOAuthInfo;
-import com.vladmihalcea.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.Type;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 
@@ -40,7 +40,7 @@ public class OAuthInfoEntity {
     @Column(name = "workspace_id")
     private String workspaceId;
 
-    @Type(JsonType.class)
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb", nullable = false)
     private AdditionalOAuthInfo additionalInfo;
 }

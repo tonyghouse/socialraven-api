@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.*;
  *   curl -X PUT https://api.socialraven.io/admin/plans/user_clerk_id \
  *        -H "X-Admin-Key: <secret>" \
  *        -H "Content-Type: application/json" \
- *        -d '{"planType":"ENTERPRISE","status":"ACTIVE","customPostsLimit":10000,"customAccountsLimit":500}'
+ *        -d '{"planType":"AGENCY_PRO","status":"ACTIVE","customPostsLimit":10000,"customAccountsLimit":500}'
  */
 @RestController
 @RequestMapping("/admin/plans")

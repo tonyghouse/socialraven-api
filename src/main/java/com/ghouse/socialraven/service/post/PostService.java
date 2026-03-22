@@ -557,6 +557,51 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
+    public Page<PostResponse> getUserPosts(String userId, int page, PostStatus postStatus) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        Pageable pageable = page == -1
+                ? Pageable.unpaged()
+                : PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
+
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+
+        Page<PostEntity> postsPage = postRepo.findByPostCollectionWorkspaceIdAndPostStatus(workspaceId, postStatus, pageable);
+        return postsPage.map(p -> getPostResponse(p, connectedAccountMap));
+    }
+
+    @Transactional(readOnly = true)
+    public PostResponse getPostById(String userId, Long postId) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        PostEntity post = postRepo.findPostWithCollectionAndMedia(postId);
+        if (post == null) {
+            throw new SocialRavenException("Post not found", HttpStatus.NOT_FOUND);
+        }
+        if (!workspaceId.equals(post.getPostCollection().getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
+        }
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+        return getPostResponse(post, connectedAccountMap);
+    }
+
+    @Transactional
+    public void deletePostById(String userId, Long postId) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        PostEntity post = postRepo.findById(postId)
+                .orElseThrow(() -> new SocialRavenException("Post not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(post.getPostCollection().getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
+        }
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zrem(PostPoolHelper.getPostsPoolName(), postId.toString());
+        }
+        postRepo.deleteById(postId);
+    }
+
+    @Transactional(readOnly = true)
     public List<CalendarPostResponse> getCalendarPosts(
             String userId,
             OffsetDateTime startTime,

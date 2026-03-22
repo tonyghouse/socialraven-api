@@ -16,6 +16,9 @@ public class UserPlanEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "workspace_id", nullable = false)
+    private String workspaceId;
+
     @Column(name = "user_id", nullable = false, unique = true)
     private String userId;
 
@@ -41,7 +44,7 @@ public class UserPlanEntity {
 
     /**
      * Custom post-collection limit per month. When set, overrides the plan_config default.
-     * Useful for enterprise customers or promotional allowances.
+     * Useful for agency customers or promotional allowances.
      */
     @Column(name = "custom_posts_limit")
     private Integer customPostsLimit;

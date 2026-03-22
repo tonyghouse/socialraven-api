@@ -45,7 +45,7 @@ public class UsageService {
                         .orElse(userId)
                 : userId;
 
-        UserPlanEntity planEntity = userPlanService.getOrCreate(planOwnerUserId);
+        UserPlanEntity planEntity = userPlanService.getOrCreate(planOwnerUserId, workspaceId);
 
         PlanConfigEntity config = planConfigRepo.findById(planEntity.getPlanType())
                 .orElseThrow(() -> new SocialRavenException("Plan config not found", HttpStatus.INTERNAL_SERVER_ERROR));

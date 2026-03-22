@@ -3,16 +3,18 @@ package com.ghouse.socialraven.dto.onboarding;
 import com.ghouse.socialraven.constant.UserType;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class CompleteOnboardingRequest {
     /** INFLUENCER or AGENCY — chosen at step 1 of onboarding */
     private UserType userType;
 
     /**
-     * Required for AGENCY; ignored for INFLUENCER (defaults to "main").
-     * The display name of the first workspace.
+     * For AGENCY: list of workspace names to create upfront (1–10).
+     * The first entry becomes the active workspace returned in the response.
      */
-    private String workspaceName;
+    private List<String> workspaceNames;
 
     /** Optional company name shown as subtitle in the workspace switcher */
     private String companyName;
