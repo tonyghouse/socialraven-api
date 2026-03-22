@@ -7,9 +7,11 @@ import com.ghouse.socialraven.dto.plan.ChangePlanRequest;
 import com.ghouse.socialraven.dto.plan.UserPlanResponse;
 import com.ghouse.socialraven.entity.PlanConfigEntity;
 import com.ghouse.socialraven.entity.UserPlanEntity;
+import com.ghouse.socialraven.entity.WorkspaceEntity;
 import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.repo.PlanConfigRepo;
 import com.ghouse.socialraven.repo.UserPlanRepo;
+import com.ghouse.socialraven.repo.WorkspaceRepo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,9 @@ public class UserPlanService {
 
     @Autowired
     private PlanConfigRepo planConfigRepo;
+
+    @Autowired
+    private WorkspaceRepo workspaceRepo;
 
     /**
      * Returns the user's plan, auto-creating a 14-day TRIAL on first access.
@@ -114,6 +119,43 @@ public class UserPlanService {
                 targetUserId, entity.getPlanType(), entity.getStatus(),
                 entity.getCustomPostsLimit(), entity.getCustomAccountsLimit());
         return toResponse(entity);
+    }
+
+    // ─── Workspace-scoped helpers ────────────────────────────────────────────────
+
+    /**
+     * Returns the plan for the given workspace.
+     * The plan is owned by workspace.ownerUserId; all workspace members share these limits.
+     */
+    @Transactional
+    public UserPlanResponse getWorkspacePlan(String workspaceId) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        UserPlanEntity entity = getOrCreate(workspace.getOwnerUserId());
+        return toResponse(entity);
+    }
+
+    /**
+     * Changes the plan for the given workspace.
+     * Only the workspace OWNER may call this (enforced via @RequiresRole in controller).
+     */
+    @Transactional
+    public UserPlanResponse changeWorkspacePlan(String workspaceId, ChangePlanRequest request) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        return changePlan(workspace.getOwnerUserId(), request);
+    }
+
+    /**
+     * Admin override keyed by workspaceId (instead of userId).
+     */
+    @Transactional
+    public UserPlanResponse adminOverrideByWorkspace(String workspaceId, AdminPlanOverrideRequest request) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        return adminOverride(workspace.getOwnerUserId(), request);
+    }
+
+    private WorkspaceEntity requireWorkspace(String workspaceId) {
+        return workspaceRepo.findById(workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Workspace not found: " + workspaceId, HttpStatus.NOT_FOUND));
     }
 
     // ─── Internal helpers ────────────────────────────────────────────────────────

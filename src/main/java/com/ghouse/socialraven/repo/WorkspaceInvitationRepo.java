@@ -14,4 +14,6 @@ public interface WorkspaceInvitationRepo extends JpaRepository<WorkspaceInvitati
 
     /** Find a specific invitation by its token. */
     Optional<WorkspaceInvitationEntity> findByToken(UUID token);
+
+    void deleteAllByWorkspaceId(String workspaceId);
 }

@@ -57,6 +57,31 @@ public class AdminPlanController {
         return userPlanService.adminOverride(userId, request);
     }
 
+    /**
+     * GET /admin/plans/workspace/{workspaceId}
+     * Returns the current plan record for the workspace owner.
+     */
+    @GetMapping("/workspace/{workspaceId}")
+    public UserPlanResponse getWorkspacePlan(
+            @PathVariable String workspaceId,
+            @RequestHeader("X-Admin-Key") String providedKey) {
+        checkAdminKey(providedKey);
+        return userPlanService.getWorkspacePlan(workspaceId);
+    }
+
+    /**
+     * PUT /admin/plans/workspace/{workspaceId}
+     * Overrides plan type, status, and/or custom limits keyed by workspaceId.
+     */
+    @PutMapping("/workspace/{workspaceId}")
+    public UserPlanResponse overrideWorkspacePlan(
+            @PathVariable String workspaceId,
+            @RequestHeader("X-Admin-Key") String providedKey,
+            @RequestBody AdminPlanOverrideRequest request) {
+        checkAdminKey(providedKey);
+        return userPlanService.adminOverrideByWorkspace(workspaceId, request);
+    }
+
     // ─── Helper ─────────────────────────────────────────────────────────────────
 
     private void checkAdminKey(String providedKey) {

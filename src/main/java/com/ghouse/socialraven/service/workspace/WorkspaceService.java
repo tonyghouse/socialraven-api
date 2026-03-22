@@ -48,7 +48,8 @@ public class WorkspaceService {
         List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
         return memberships.stream()
                 .map(m -> {
-                    WorkspaceEntity ws = workspaceRepo.findById(m.getWorkspaceId())
+                    // Only return active (not soft-deleted) workspaces
+                    WorkspaceEntity ws = workspaceRepo.findByIdAndDeletedAtIsNull(m.getWorkspaceId())
                             .orElse(null);
                     if (ws == null) return null;
                     return toResponse(ws, m.getRole());
@@ -67,12 +68,12 @@ public class WorkspaceService {
             throw new SocialRavenException("Workspace name is required", HttpStatus.BAD_REQUEST);
         }
 
-        // Plan-gate: count current owned workspaces vs allowed limit
+        // Plan-gate: count current active owned workspaces vs allowed limit
         UserPlanEntity planEntity = userPlanRepo.findByUserId(userId).orElse(null);
         if (planEntity != null) {
             PlanConfigEntity config = planConfigRepo.findById(planEntity.getPlanType()).orElse(null);
             if (config != null && config.getMaxWorkspaces() > 0) {
-                long ownedCount = workspaceRepo.findAllByOwnerUserId(userId).size();
+                long ownedCount = workspaceRepo.findAllByOwnerUserIdAndDeletedAtIsNull(userId).size();
                 if (ownedCount >= config.getMaxWorkspaces()) {
                     throw new SocialRavenException(
                             "Workspace limit reached for your plan (" + config.getMaxWorkspaces() + ")",
@@ -109,7 +110,7 @@ public class WorkspaceService {
      * Returns workspace details. Caller must be a member (enforced by WorkspaceAccessFilter).
      */
     public WorkspaceResponse getWorkspace(String workspaceId, String userId) {
-        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+        WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
                 .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
         WorkspaceRole role = workspaceMemberRepo.findByWorkspaceIdAndUserId(workspaceId, userId)
                 .map(WorkspaceMemberEntity::getRole)
@@ -122,7 +123,7 @@ public class WorkspaceService {
      */
     @Transactional
     public WorkspaceResponse updateWorkspace(String workspaceId, String userId, UpdateWorkspaceRequest req) {
-        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+        WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
                 .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
 
         WorkspaceRole role = workspaceMemberRepo.findByWorkspaceIdAndUserId(workspaceId, userId)
@@ -149,24 +150,25 @@ public class WorkspaceService {
     }
 
     /**
-     * Deletes a workspace. Caller must be OWNER.
+     * Soft-deletes a workspace. Caller must be OWNER.
+     * Sets deleted_at = now(). WorkspaceDeletionScheduler hard-deletes after 30 days (GDPR §5.6).
      */
     @Transactional
     public void deleteWorkspace(String workspaceId, String userId) {
-        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+        WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
                 .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
 
         if (!workspace.getOwnerUserId().equals(userId)) {
             throw new SocialRavenException("Only the workspace owner can delete it", HttpStatus.FORBIDDEN);
         }
 
-        // Prevent deleting personal workspace
         if (workspaceId.startsWith("personal_")) {
             throw new SocialRavenException("Personal workspace cannot be deleted", HttpStatus.BAD_REQUEST);
         }
 
-        workspaceRepo.delete(workspace);
-        log.info("Workspace deleted: id={}, by userId={}", workspaceId, userId);
+        workspace.setDeletedAt(OffsetDateTime.now());
+        workspaceRepo.save(workspace);
+        log.info("Workspace soft-deleted (30-day retention): id={}, by userId={}", workspaceId, userId);
     }
 
     private WorkspaceResponse toResponse(WorkspaceEntity ws, WorkspaceRole role) {

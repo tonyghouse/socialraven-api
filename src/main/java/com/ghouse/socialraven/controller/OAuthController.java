@@ -1,5 +1,7 @@
 package com.ghouse.socialraven.controller;
 
+import com.ghouse.socialraven.annotation.RequiresRole;
+import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.ConnectedAccount;
 import com.ghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.ghouse.socialraven.service.provider.FacebookOAuthService;
@@ -52,6 +54,7 @@ public class OAuthController {
     private JedisPool jedisPool;
 
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/x/callback")
     public ResponseEntity<String> handleCallback(
             @RequestBody XOAuthCallbackRequest request
@@ -63,12 +66,14 @@ public class OAuthController {
 
 
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/linkedin/callback")
     public ResponseEntity<String> handleLinkedinCallback(@RequestBody Map<String, String> body) {
         linkedInOAuthService.exchangeCodeForToken(body.get("code"));
         return ResponseEntity.ok("LinkedIn connected");
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/youtube/callback")
     public ResponseEntity<?> youtubeCallback(@RequestBody Map<String, String> body) {
         try {
@@ -80,6 +85,7 @@ public class OAuthController {
         }
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/instagram/callback")
     public ResponseEntity<?> instagramCallback(
             @RequestBody Map<String, String> body
@@ -89,6 +95,7 @@ public class OAuthController {
         return ResponseEntity.ok("Instagram connected");
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/facebook/callback")
     public ResponseEntity<?> facebookCallback(
             @RequestBody Map<String, String> body
@@ -100,6 +107,7 @@ public class OAuthController {
 
 
     // Add to OAuthController
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/x/store-pkce")
     public ResponseEntity<Map<String, String>> storePkce(@RequestBody Map<String, String> data) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());

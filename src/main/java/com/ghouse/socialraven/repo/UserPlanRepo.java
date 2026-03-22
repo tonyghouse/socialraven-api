@@ -9,4 +9,6 @@ import java.util.Optional;
 @Repository
 public interface UserPlanRepo extends JpaRepository<UserPlanEntity, Long> {
     Optional<UserPlanEntity> findByUserId(String userId);
+    Optional<UserPlanEntity> findByWorkspaceId(String workspaceId);
+    void deleteAllByWorkspaceId(String workspaceId);
 }

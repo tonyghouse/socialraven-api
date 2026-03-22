@@ -2,6 +2,7 @@ package com.ghouse.socialraven.config;
 
 import com.ghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.ghouse.socialraven.repo.WorkspaceMemberRepo;
+import com.ghouse.socialraven.repo.WorkspaceRepo;
 import com.ghouse.socialraven.util.SecurityContextUtil;
 import com.ghouse.socialraven.util.WorkspaceContext;
 import jakarta.servlet.FilterChain;
@@ -30,6 +31,9 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
 
     @Autowired
     private WorkspaceMemberRepo workspaceMemberRepo;
+
+    @Autowired
+    private WorkspaceRepo workspaceRepo;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -73,6 +77,13 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
             Optional<WorkspaceMemberEntity> membership =
                     workspaceMemberRepo.findByWorkspaceIdAndUserId(requestedWorkspaceId, userId);
             if (membership.isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                return;
+            }
+
+            // Reject access to soft-deleted workspaces (GDPR §5.6 — still in 30-day retention window)
+            boolean workspaceActive = workspaceRepo.findByIdAndDeletedAtIsNull(requestedWorkspaceId).isPresent();
+            if (!workspaceActive) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 return;
             }

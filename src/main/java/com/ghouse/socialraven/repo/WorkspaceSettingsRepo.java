@@ -6,4 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface WorkspaceSettingsRepo extends JpaRepository<WorkspaceSettingsEntity, String> {
+    void deleteById(String workspaceId);
 }

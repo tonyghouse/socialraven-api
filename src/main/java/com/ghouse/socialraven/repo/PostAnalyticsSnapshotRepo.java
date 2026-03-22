@@ -2,6 +2,7 @@ package com.ghouse.socialraven.repo;
 
 import com.ghouse.socialraven.entity.PostAnalyticsSnapshotEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -13,6 +14,10 @@ import java.util.List;
 public interface PostAnalyticsSnapshotRepo extends JpaRepository<PostAnalyticsSnapshotEntity, Long> {
 
     List<PostAnalyticsSnapshotEntity> findAllByPostId(Long postId);
+
+    @Modifying
+    @Query(value = "DELETE FROM socialraven.post_analytics_snapshots WHERE workspace_id = :workspaceId", nativeQuery = true)
+    void deleteAllByWorkspaceId(@Param("workspaceId") String workspaceId);
 
     @Query(value = """
         SELECT s.* FROM socialraven.post_analytics_snapshots s

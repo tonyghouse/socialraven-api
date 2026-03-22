@@ -1,6 +1,8 @@
 package com.ghouse.socialraven.controller;
 
+import com.ghouse.socialraven.annotation.RequiresRole;
 import com.ghouse.socialraven.constant.PostStatus;
+import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.CalendarPostResponse;
 import com.ghouse.socialraven.dto.PostResponse;
 import com.ghouse.socialraven.dto.PostCollection;
@@ -54,6 +56,7 @@ public class PostController {
         return post;
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @DeleteMapping("/{postId}")
     public void deletePostById(@PathVariable Long postId
     ) {

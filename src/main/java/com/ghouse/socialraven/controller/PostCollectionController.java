@@ -1,5 +1,7 @@
 package com.ghouse.socialraven.controller;
 
+import com.ghouse.socialraven.annotation.RequiresRole;
+import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.PostCollection;
 import com.ghouse.socialraven.dto.PostCollectionResponse;
 import com.ghouse.socialraven.dto.ScheduleDraftRequest;
@@ -29,6 +31,7 @@ public class PostCollectionController {
     @Autowired
     private PostService postService;
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/schedule")
     public PostCollection schedulePost(@RequestBody PostCollection postCollection) {
         return postService.schedulePostCollection(postCollection);
@@ -53,6 +56,7 @@ public class PostCollectionController {
         return postService.getPostCollectionById(userId, id);
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deletePostCollection(@PathVariable Long id) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
@@ -60,6 +64,7 @@ public class PostCollectionController {
         return ResponseEntity.noContent().build();
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PatchMapping("/{id}")
     public PostCollectionResponse updatePostCollection(
             @PathVariable Long id,
@@ -68,6 +73,7 @@ public class PostCollectionController {
         return postService.updatePostCollection(userId, id, request);
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/{id}/schedule")
     public PostCollectionResponse scheduleDraft(
             @PathVariable Long id,

@@ -1,5 +1,7 @@
 package com.ghouse.socialraven.controller;
 
+import com.ghouse.socialraven.annotation.RequiresRole;
+import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.service.storage.S3PresignedUrlService;
 import com.ghouse.socialraven.util.WorkspaceContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +50,7 @@ public class MediaController {
 
 
 
+    @RequiresRole(WorkspaceRole.MEMBER)
     @PostMapping("/presign")
     public Map<String, String> getPresignedUrl(
             @RequestParam String fileName,

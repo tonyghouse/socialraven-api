@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface AnalyticsJobRepo extends JpaRepository<AnalyticsJobEntity, Long> {
     List<AnalyticsJobEntity> findAllByPostId(Long postId);
+    void deleteAllByWorkspaceId(String workspaceId);
 }

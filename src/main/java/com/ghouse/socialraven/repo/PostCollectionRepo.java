@@ -28,6 +28,9 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     Optional<PostCollectionEntity> findByIdAndWorkspaceId(Long id, String workspaceId);
 
+    /** Used by WorkspaceDeletionScheduler to cascade-delete posts and media via JPA. */
+    List<PostCollectionEntity> findAllByWorkspaceId(String workspaceId);
+
     /**
      * Counts non-draft post-collections for a workspace scheduled on or after startOfMonth.
      * Used for monthly usage quota calculation.

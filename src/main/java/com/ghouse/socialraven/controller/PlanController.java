@@ -1,12 +1,16 @@
 package com.ghouse.socialraven.controller;
 
+import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.plan.ChangePlanRequest;
 import com.ghouse.socialraven.dto.plan.UsageStatsResponse;
 import com.ghouse.socialraven.dto.plan.UserPlanResponse;
+import com.ghouse.socialraven.exception.SocialRavenException;
 import com.ghouse.socialraven.service.plan.UsageService;
 import com.ghouse.socialraven.service.plan.UserPlanService;
 import com.ghouse.socialraven.util.SecurityContextUtil;
+import com.ghouse.socialraven.util.WorkspaceContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,11 +26,15 @@ public class PlanController {
 
     /**
      * GET /plans/me
-     * Returns the authenticated user's current plan and limits.
-     * Auto-creates a 14-day TRIAL plan on first access.
+     * Returns the workspace plan when X-Workspace-Id header is present;
+     * falls back to the authenticated user's personal plan otherwise.
      */
     @GetMapping("/me")
     public UserPlanResponse getUserPlan() {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (workspaceId != null) {
+            return userPlanService.getWorkspacePlan(workspaceId);
+        }
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return userPlanService.getUserPlan(userId);
     }
@@ -34,17 +42,25 @@ public class PlanController {
     /**
      * PATCH /plans/me
      * Body: { "planType": "PRO" }
-     * Switches the authenticated user to the requested plan.
+     * Changes the workspace plan (OWNER only) or the personal plan.
      */
     @PatchMapping("/me")
     public UserPlanResponse changePlan(@RequestBody ChangePlanRequest request) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        if (workspaceId != null) {
+            WorkspaceRole role = WorkspaceContext.getRole();
+            if (role == null || !role.isAtLeast(WorkspaceRole.OWNER)) {
+                throw new SocialRavenException("Only the workspace owner can change the plan", HttpStatus.FORBIDDEN);
+            }
+            return userPlanService.changeWorkspacePlan(workspaceId, request);
+        }
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return userPlanService.changePlan(userId, request);
     }
 
     /**
      * GET /plans/usage
-     * Returns posts-used-this-month and connected-accounts counts vs. plan limits.
+     * Returns posts-used-this-month, connected-accounts, and workspace counts vs. plan limits.
      */
     @GetMapping("/usage")
     public UsageStatsResponse getUsage() {

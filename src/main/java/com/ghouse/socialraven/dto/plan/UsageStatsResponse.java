@@ -10,4 +10,8 @@ public class UsageStatsResponse {
     private long connectedAccountsCount;
     /** null = unlimited */
     private Integer accountsLimit;
+    /** Number of workspaces owned by the workspace owner */
+    private int workspacesOwned;
+    /** Max workspaces allowed by the owner's plan; -1 = unlimited */
+    private Integer maxWorkspaces;
 }

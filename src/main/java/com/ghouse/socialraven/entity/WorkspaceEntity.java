@@ -34,4 +34,8 @@ public class WorkspaceEntity {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    /** Set on soft-delete. Hard-deleted by WorkspaceDeletionScheduler after 30 days (GDPR §5.6). */
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
 }
