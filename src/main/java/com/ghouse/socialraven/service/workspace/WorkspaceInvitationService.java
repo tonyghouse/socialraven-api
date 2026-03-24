@@ -104,11 +104,25 @@ public class WorkspaceInvitationService {
             workspaceNames.add(workspace.getName());
         }
 
+        // Resolve inviter's display name from Clerk
+        String inviterName = callerUserId;
+        ClerkUserService.UserProfile inviterProfile = clerkUserService.getUserProfile(callerUserId);
+        if (inviterProfile != null) {
+            String first = inviterProfile.firstName() != null ? inviterProfile.firstName().trim() : "";
+            String last = inviterProfile.lastName() != null ? inviterProfile.lastName().trim() : "";
+            String fullName = (first + " " + last).trim();
+            if (!fullName.isEmpty()) {
+                inviterName = fullName;
+            } else if (inviterProfile.email() != null && !inviterProfile.email().isBlank()) {
+                inviterName = inviterProfile.email();
+            }
+        }
+
         // Send one email listing all workspaces — use the first token as the invite link
         // (each token is per-workspace; the accept flow accepts ALL matching tokens for the email)
         UUID firstToken = created.get(0).getToken();
         try {
-            emailService.sendInvitationEmail(invitedEmail, workspaceNames, callerUserId, req.getRole(), firstToken);
+            emailService.sendInvitationEmail(invitedEmail, workspaceNames, inviterName, req.getRole(), firstToken);
         } catch (Exception e) {
             log.warn("Invitation created but email failed for {}: {}", invitedEmail, e.getMessage());
             // Don't roll back — the invitation exists; resend can be implemented later
