@@ -165,10 +165,11 @@ public class InstagramOAuthService {
 
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
         String url = UriComponentsBuilder
-                .fromHttpUrl("https://graph.instagram.com/access_token")
-                .queryParam("grant_type", "ig_exchange_token")
+                .fromHttpUrl("https://graph.facebook.com/oauth/access_token")
+                .queryParam("grant_type", "fb_exchange_token")
+                .queryParam("client_id", appId)
                 .queryParam("client_secret", appSecret)
-                .queryParam("access_token", shortAccessToken)
+                .queryParam("fb_exchange_token", shortAccessToken)
                 .toUriString();
 
         Map<String, Object> response = rest.exchange(
