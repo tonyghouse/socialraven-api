@@ -23,6 +23,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 
+import java.net.URI;
 import java.util.Map;
 
 @Service
@@ -164,15 +165,17 @@ public class InstagramOAuthService {
     }
 
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
-        String url = UriComponentsBuilder
-                .fromHttpUrl("https://graph.instagram.com/v22.0/access_token")
+        URI uri = UriComponentsBuilder
+                .fromHttpUrl("https://graph.instagram.com/access_token")
                 .queryParam("grant_type", "ig_exchange_token")
                 .queryParam("client_secret", appSecret)
                 .queryParam("access_token", shortAccessToken)
-                .toUriString();
+                .build()
+                .encode()
+                .toUri();
 
         Map<String, Object> response = rest.exchange(
-                url, HttpMethod.GET, null,
+                uri, HttpMethod.GET, null,
                 new ParameterizedTypeReference<Map<String, Object>>() {}
         ).getBody();
 
