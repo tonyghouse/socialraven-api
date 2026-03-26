@@ -22,6 +22,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+
 import java.util.Map;
 
 @Service
@@ -163,20 +164,15 @@ public class InstagramOAuthService {
     }
 
     private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
-        String url = "https://graph.instagram.com/access_token";
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        formData.add("grant_type", "ig_exchange_token");
-        formData.add("client_secret", appSecret);
-        formData.add("access_token", shortAccessToken);
-
-        HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(formData, headers);
+        String url = UriComponentsBuilder
+                .fromHttpUrl("https://graph.instagram.com/access_token")
+                .queryParam("grant_type", "ig_exchange_token")
+                .queryParam("client_secret", appSecret)
+                .queryParam("access_token", shortAccessToken)
+                .toUriString();
 
         Map<String, Object> response = rest.exchange(
-                url, HttpMethod.POST, request,
+                url, HttpMethod.GET, null,
                 new ParameterizedTypeReference<Map<String, Object>>() {}
         ).getBody();
 
