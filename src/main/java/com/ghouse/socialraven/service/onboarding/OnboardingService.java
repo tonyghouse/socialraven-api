@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.service.onboarding;
 
+import com.ghouse.socialraven.constant.UserStatus;
 import com.ghouse.socialraven.constant.UserType;
 import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.onboarding.CompleteOnboardingRequest;
@@ -67,9 +68,16 @@ public class OnboardingService {
      */
     @Transactional
     public OnboardingStatusResponse completeOnboarding(String userId, CompleteOnboardingRequest request) {
+        boolean isReactivation = false;
+
         if (userProfileRepo.existsById(userId)) {
-            log.info("Onboarding already completed for user {}", userId);
-            return getStatus(userId);
+            UserProfileEntity existing = userProfileRepo.findById(userId).orElseThrow();
+            if (existing.getStatus() != UserStatus.INACTIVE) {
+                log.info("Onboarding already completed for user {}", userId);
+                return getStatus(userId);
+            }
+            // INACTIVE user re-onboarding — allow them to create a new workspace
+            isReactivation = true;
         }
 
         if (request.getUserType() == null) {
@@ -90,22 +98,34 @@ public class OnboardingService {
 
         OffsetDateTime now = OffsetDateTime.now();
 
-        // 1. Persist user profile
-        UserProfileEntity profile = new UserProfileEntity();
-        profile.setUserId(userId);
-        profile.setUserType(userType);
-        profile.setCreatedAt(now);
-        profile.setUpdatedAt(now);
-        userProfileRepo.save(profile);
+        // 1. Persist or reactivate user profile
+        if (!isReactivation) {
+            UserProfileEntity profile = new UserProfileEntity();
+            profile.setUserId(userId);
+            profile.setUserType(userType);
+            profile.setStatus(UserStatus.ACTIVE);
+            profile.setCreatedAt(now);
+            profile.setUpdatedAt(now);
+            userProfileRepo.save(profile);
+        } else {
+            UserProfileEntity profile = userProfileRepo.findById(userId).orElseThrow();
+            profile.setUserType(userType);
+            profile.setStatus(UserStatus.ACTIVE);
+            profile.setUpdatedAt(now);
+            userProfileRepo.save(profile);
+            log.info("User reactivated via re-onboarding: userId={}", userId);
+        }
 
         // 2. Determine workspace names to create
         List<String> namesToCreate;
         String firstWorkspaceId;
 
         if (userType == UserType.INFLUENCER) {
-            // Influencer always gets a single personal workspace
+            // Influencer gets a single personal workspace.
+            // On initial onboarding use a stable "personal_<userId>" ID;
+            // on re-activation use a new UUID to avoid conflicts with the old workspace.
             namesToCreate = List.of("main");
-            firstWorkspaceId = "personal_" + userId;
+            firstWorkspaceId = isReactivation ? UUID.randomUUID().toString() : "personal_" + userId;
         } else {
             namesToCreate = request.getWorkspaceNames().stream()
                     .map(String::trim)

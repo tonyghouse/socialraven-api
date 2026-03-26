@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.entity;
 
+import com.ghouse.socialraven.constant.UserStatus;
 import com.ghouse.socialraven.constant.UserType;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -18,6 +19,10 @@ public class UserProfileEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "user_type", length = 20, nullable = false)
     private UserType userType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 20, nullable = false)
+    private UserStatus status = UserStatus.ACTIVE;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;

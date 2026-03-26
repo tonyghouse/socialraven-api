@@ -1,5 +1,6 @@
 package com.ghouse.socialraven.service.workspace;
 
+import com.ghouse.socialraven.constant.UserStatus;
 import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.workspace.AcceptInviteRequest;
 import com.ghouse.socialraven.dto.workspace.InvitationResponse;
@@ -8,6 +9,7 @@ import com.ghouse.socialraven.entity.WorkspaceEntity;
 import com.ghouse.socialraven.entity.WorkspaceInvitationEntity;
 import com.ghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.ghouse.socialraven.exception.SocialRavenException;
+import com.ghouse.socialraven.repo.UserProfileRepo;
 import com.ghouse.socialraven.repo.WorkspaceInvitationRepo;
 import com.ghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.ghouse.socialraven.repo.WorkspaceRepo;
@@ -37,6 +39,9 @@ public class WorkspaceInvitationService {
 
     @Autowired
     private WorkspaceRepo workspaceRepo;
+
+    @Autowired
+    private UserProfileRepo userProfileRepo;
 
     @Autowired
     private EmailService emailService;
@@ -215,6 +220,16 @@ public class WorkspaceInvitationService {
         // Mark invitation as used (single-use)
         invitation.setAcceptedAt(OffsetDateTime.now());
         invitationRepo.save(invitation);
+
+        // Reactivate the user if they were previously deactivated
+        userProfileRepo.findById(callerUserId).ifPresent(profile -> {
+            if (profile.getStatus() == UserStatus.INACTIVE) {
+                profile.setStatus(UserStatus.ACTIVE);
+                profile.setUpdatedAt(OffsetDateTime.now());
+                userProfileRepo.save(profile);
+                log.info("User reactivated via invitation acceptance: userId={}", callerUserId);
+            }
+        });
 
         return workspaceId;
     }

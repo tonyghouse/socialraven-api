@@ -1,9 +1,11 @@
 package com.ghouse.socialraven.service.workspace;
 
+import com.ghouse.socialraven.constant.UserStatus;
 import com.ghouse.socialraven.constant.WorkspaceRole;
 import com.ghouse.socialraven.dto.workspace.MemberResponse;
 import com.ghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.ghouse.socialraven.exception.SocialRavenException;
+import com.ghouse.socialraven.repo.UserProfileRepo;
 import com.ghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.ghouse.socialraven.service.ClerkUserService;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -21,6 +24,9 @@ public class WorkspaceMemberService {
 
     @Autowired
     private WorkspaceMemberRepo memberRepo;
+
+    @Autowired
+    private UserProfileRepo userProfileRepo;
 
     @Autowired
     private ClerkUserService clerkUserService;
@@ -119,5 +125,16 @@ public class WorkspaceMemberService {
 
         memberRepo.delete(target);
         log.info("Member removed: workspaceId={}, userId={}, by={}", workspaceId, targetUserId, callerUserId);
+
+        // Deactivate user if they no longer belong to any workspace
+        List<WorkspaceMemberEntity> remaining = memberRepo.findAllByUserId(targetUserId);
+        if (remaining.isEmpty()) {
+            userProfileRepo.findById(targetUserId).ifPresent(profile -> {
+                profile.setStatus(UserStatus.INACTIVE);
+                profile.setUpdatedAt(OffsetDateTime.now());
+                userProfileRepo.save(profile);
+                log.info("User deactivated (no remaining workspaces): userId={}", targetUserId);
+            });
+        }
     }
 }

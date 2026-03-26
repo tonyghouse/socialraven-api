@@ -16,12 +16,14 @@ import com.ghouse.socialraven.repo.UserProfileRepo;
 import com.ghouse.socialraven.repo.WorkspaceRepo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -167,7 +169,15 @@ public class UserPlanService {
     // ─── Internal helpers ────────────────────────────────────────────────────────
 
     public UserPlanEntity getOrCreate(String userId, String workspaceId) {
-        return userPlanRepo.findByUserId(userId).orElseGet(() -> createTrial(userId, workspaceId));
+        Optional<UserPlanEntity> existing = userPlanRepo.findByUserId(userId);
+        if (existing.isPresent()) return existing.get();
+        try {
+            return createTrial(userId, workspaceId);
+        } catch (DataIntegrityViolationException e) {
+            // Concurrent request already created the plan; return it
+            return userPlanRepo.findByUserId(userId)
+                    .orElseThrow(() -> new SocialRavenException("Plan unavailable for user: " + userId, HttpStatus.INTERNAL_SERVER_ERROR));
+        }
     }
 
     public UserPlanEntity getOrCreate(String userId) {
