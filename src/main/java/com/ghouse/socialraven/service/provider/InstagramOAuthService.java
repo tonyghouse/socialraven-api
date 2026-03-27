@@ -56,7 +56,10 @@ public class InstagramOAuthService {
         Map<String, Object> tokenResponse = exchangeForAccessToken(code);
         String shortLivedAccessToken = (String) tokenResponse.get("access_token");
         String instagramUserId = String.valueOf(((Number) tokenResponse.get("user_id")).longValue());
-        log.info("Obtained short-lived token for Instagram user ID: {}", instagramUserId);
+        log.info("Obtained short-lived token for Instagram user ID: {}. Token prefix: {}, response keys: {}",
+                instagramUserId,
+                shortLivedAccessToken != null && shortLivedAccessToken.length() > 6 ? shortLivedAccessToken.substring(0, 6) : "short",
+                tokenResponse.keySet());
 
         // STEP 2: Exchange short-lived → long-lived token (~60 days)
         Map<String, Object> longTokenResponse = exchangeForLongLivedToken(shortLivedAccessToken);
@@ -173,6 +176,9 @@ public class InstagramOAuthService {
                 .build()
                 .encode()
                 .toUri();
+
+        log.info("Long-lived token exchange URI (token masked): https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=[MASKED]&access_token=[MASKED]. Full URI host+path: {}",
+                uri.getScheme() + "://" + uri.getHost() + uri.getPath());
 
         Map<String, Object> response = rest.exchange(
                 uri, HttpMethod.GET, null,
