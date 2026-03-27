@@ -2,7 +2,7 @@ package com.tonyghouse.socialraven.scheduler;
 
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
-import com.ghouse.socialraven.repo.*;
+import com.tonyghouse.socialraven.repo.*;
 import com.tonyghouse.socialraven.repo.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;

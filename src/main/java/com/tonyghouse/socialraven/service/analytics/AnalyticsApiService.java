@@ -1,6 +1,6 @@
 package com.tonyghouse.socialraven.service.analytics;
 
-import com.ghouse.socialraven.dto.analytics.*;
+import com.tonyghouse.socialraven.dto.analytics.*;
 import com.tonyghouse.socialraven.dto.analytics.*;
 import com.tonyghouse.socialraven.entity.AccountAnalyticsSnapshotEntity;
 import com.tonyghouse.socialraven.entity.PostAnalyticsSnapshotEntity;

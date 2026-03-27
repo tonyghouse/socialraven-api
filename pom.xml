@@ -7,7 +7,7 @@
 		<version>3.2.5</version>
 		<relativePath />
 	</parent>
-	<groupId>com.ghouse</groupId>
+	<groupId>com.tonyghouse</groupId>
 	<artifactId>socialraven</artifactId>
 	<version>0.0.1</version>
 	<name>socialraven</name>

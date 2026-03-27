@@ -1,6 +1,6 @@
 package com.tonyghouse.socialraven.controller;
 
-import com.ghouse.socialraven.dto.analytics.*;
+import com.tonyghouse.socialraven.dto.analytics.*;
 import com.tonyghouse.socialraven.dto.analytics.*;
 import com.tonyghouse.socialraven.service.analytics.AnalyticsApiService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;

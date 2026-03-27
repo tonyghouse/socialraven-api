@@ -32,7 +32,7 @@ Spring Boot 3.2.5 / Java 21 REST API for social media post scheduling and publis
 
 ## Architecture
 
-**Package root:** `com.ghouse.socialraven`
+**Package root:** `com.tonyghouse.socialraven`
 
 Layered architecture: Controllers → Services → Repositories → Entities
 

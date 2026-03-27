@@ -1,4 +1,4 @@
-// com.ghouse.socialraven.service.oauth.XOAuthService
+// com.tonyghouse.socialraven.service.oauth.XOAuthService
 package com.tonyghouse.socialraven.service.provider;
 
 import com.tonyghouse.socialraven.constant.Provider;
