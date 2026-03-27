@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -22,8 +21,6 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-
-import java.net.URI;
 import java.util.Map;
 
 @Service
@@ -52,22 +49,20 @@ public class InstagramOAuthService {
     public void handleCallback(String code, String userId) {
         log.info("Starting Instagram OAuth callback for userId: {}", userId);
 
-        // STEP 1: Exchange code → short-lived token
+        // STEP 1: Exchange code → access token
+        // The new Instagram Platform API (IGAA tokens) returns a long-lived token (60 days)
+        // directly from this exchange. The separate ig_exchange_token step is only for the
+        // old Basic Display API (IGQVJ tokens) and the EAA token flow.
         Map<String, Object> tokenResponse = exchangeForAccessToken(code);
-        String shortLivedAccessToken = (String) tokenResponse.get("access_token");
+        String accessToken = (String) tokenResponse.get("access_token");
         String instagramUserId = String.valueOf(((Number) tokenResponse.get("user_id")).longValue());
-        log.info("Obtained short-lived token for Instagram user ID: {}. Token prefix: {}, response keys: {}",
-                instagramUserId,
-                shortLivedAccessToken != null && shortLivedAccessToken.length() > 6 ? shortLivedAccessToken.substring(0, 6) : "short",
-                tokenResponse.keySet());
+        log.info("Obtained access token for Instagram user ID: {}", instagramUserId);
 
-        // STEP 2: Exchange short-lived → long-lived token (~60 days)
-        Map<String, Object> longTokenResponse = exchangeForLongLivedToken(shortLivedAccessToken);
-        String longAccessToken = (String) longTokenResponse.get("access_token");
-        Long expiresIn = ((Number) longTokenResponse.get("expires_in")).longValue();
-        log.info("Obtained long-lived token. Expires in: {} seconds", expiresIn);
+        // IGAA tokens are already long-lived (60 days). The ig_exchange_token endpoint
+        // is only for EAA/IGQVJ token formats.
+        long expiresIn = 60L * 24 * 60 * 60; // 60 days in seconds
 
-        // STEP 3: Upsert — update if already connected, otherwise insert
+        // STEP 2: Upsert — update if already connected, otherwise insert
         OAuthInfoEntity oAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
                 userId, Provider.INSTAGRAM, instagramUserId
         );
@@ -83,7 +78,7 @@ public class InstagramOAuthService {
         }
 
         long expiresAtMillis = System.currentTimeMillis() + expiresIn * 1000L;
-        oAuthInfo.setAccessToken(longAccessToken);
+        oAuthInfo.setAccessToken(accessToken);
         oAuthInfo.setExpiresAt(expiresAtMillis);
         oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAtMillis));
 
@@ -167,28 +162,4 @@ public class InstagramOAuthService {
         return response;
     }
 
-    private Map<String, Object> exchangeForLongLivedToken(String shortAccessToken) {
-        URI uri = UriComponentsBuilder
-                .fromHttpUrl("https://graph.instagram.com/access_token")
-                .queryParam("grant_type", "ig_exchange_token")
-                .queryParam("client_secret", appSecret)
-                .queryParam("access_token", shortAccessToken)
-                .build()
-                .encode()
-                .toUri();
-
-        log.info("Long-lived token exchange URI (token masked): https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=[MASKED]&access_token=[MASKED]. Full URI host+path: {}",
-                uri.getScheme() + "://" + uri.getHost() + uri.getPath());
-
-        Map<String, Object> response = rest.exchange(
-                uri, HttpMethod.GET, null,
-                new ParameterizedTypeReference<Map<String, Object>>() {}
-        ).getBody();
-
-        if (response == null || !response.containsKey("access_token")) {
-            throw new RuntimeException("Instagram did not return an access_token in the long-lived token exchange");
-        }
-
-        return response;
-    }
 }
