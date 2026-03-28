@@ -1,6 +1,5 @@
 package com.tonyghouse.socialraven.entity;
 
-import com.tonyghouse.socialraven.constant.PostCollectionStatus;
 import com.tonyghouse.socialraven.constant.PostCollectionType;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -26,15 +25,11 @@ public class PostCollectionEntity {
     @Column(name = "workspace_id")
     private String workspaceId;
 
-    @Column(length = 1000, nullable = false)
-    private String title;
-
     @Column(length = 100000, nullable = false)
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(length = 50, nullable = false)
-    private PostCollectionStatus postCollectionStatus; //TODO-REMOVE
+    @Column(name = "is_draft", nullable = false)
+    private boolean draft;
 
     @Enumerated(EnumType.STRING)
     @Column(length = 50, nullable = false)

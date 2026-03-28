@@ -1,6 +1,5 @@
 package com.tonyghouse.socialraven.service.post;
 
-import com.tonyghouse.socialraven.constant.PostCollectionStatus;
 import com.tonyghouse.socialraven.constant.PostCollectionType;
 import com.tonyghouse.socialraven.constant.PostStatus;
 import com.tonyghouse.socialraven.constant.Provider;
@@ -93,12 +92,11 @@ public class PostService {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         String workspaceId = WorkspaceContext.getWorkspaceId();
 
-        postCollection.setPostCollectionStatus(isDraft ? PostCollectionStatus.DRAFT : PostCollectionStatus.SCHEDULED);
+        postCollection.setDraft(isDraft);
         PostCollectionType postType = postCollectionReq.getPostType();
         postCollection.setPostCollectionType(postType);
         postCollection.setCreatedBy(userId);
         postCollection.setWorkspaceId(workspaceId);
-        postCollection.setTitle(postCollectionReq.getTitle() != null ? postCollectionReq.getTitle() : "");
         postCollection.setDescription(postCollectionReq.getDescription() != null ? postCollectionReq.getDescription() : "");
         OffsetDateTime scheduledTime = postCollectionReq.getScheduledTime();
         postCollection.setScheduledTime(scheduledTime);
@@ -168,7 +166,7 @@ public class PostService {
         if (!workspaceId.equals(collection.getWorkspaceId())) {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        if (collection.getPostCollectionStatus() != PostCollectionStatus.DRAFT) {
+        if (!collection.isDraft()) {
             throw new SocialRavenException("Collection is not a draft", HttpStatus.BAD_REQUEST);
         }
         if (CollectionUtils.isEmpty(collection.getPosts())) {
@@ -178,7 +176,7 @@ public class PostService {
 
         OffsetDateTime scheduledTime = req.getScheduledTime();
         collection.setScheduledTime(scheduledTime);
-        collection.setPostCollectionStatus(PostCollectionStatus.SCHEDULED);
+        collection.setDraft(false);
 
         for (PostEntity post : collection.getPosts()) {
             post.setScheduledTime(scheduledTime);
@@ -233,9 +231,6 @@ public class PostService {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
 
-        if (req.getTitle() != null) {
-            collection.setTitle(req.getTitle());
-        }
         if (req.getDescription() != null) {
             collection.setDescription(req.getDescription());
         }
@@ -313,7 +308,7 @@ public class PostService {
             }
 
             PostCollectionType postType = collection.getPostCollectionType();
-            boolean collectionIsDraft = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT;
+            boolean collectionIsDraft = collection.isDraft();
             for (ConnectedAccount account : requestedAccounts) {
                 if (!currentIds.contains(account.getProviderUserId())) {
                     PostEntity newPost = new PostEntity();
@@ -509,13 +504,12 @@ public class PostService {
             }
         }
 
-        String overallStatus = collection.getPostCollectionStatus() == PostCollectionStatus.DRAFT
+        String overallStatus = collection.isDraft()
                 ? "DRAFT"
                 : deriveOverallStatus(posts);
 
         return new PostCollectionResponse(
                 collection.getId(),
-                collection.getTitle(),
                 collection.getDescription(),
                 collection.getScheduledTime(),
                 collection.getPostCollectionType().name(),
@@ -547,7 +541,6 @@ public class PostService {
                 post.getId(),
                 postCollection.getId(),
                 connectedAccount != null ? ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()) : null,
-                postCollection.getTitle(),
                 postCollection.getDescription(),
                 post.getPostStatus().toString(),
                 post.getScheduledTime(),
@@ -622,7 +615,6 @@ public class PostService {
                     return new CalendarPostResponse(
                             p.getId(),
                             pc.getId(),
-                            pc.getTitle(),
                             p.getProvider().name().toLowerCase(),
                             p.getProviderUserId(),
                             p.getPostStatus().name(),
@@ -637,7 +629,7 @@ public class PostService {
         if (posts == null || posts.isEmpty()) return "SCHEDULED";
         long total = posts.size();
         long scheduled = posts.stream().filter(p -> p.getPostStatus() == PostStatus.SCHEDULED).count();
-        long posted = posts.stream().filter(p -> p.getPostStatus() == PostStatus.POSTED).count();
+        long posted = posts.stream().filter(p -> p.getPostStatus() == PostStatus.PUBLISHED).count();
         long failed = posts.stream().filter(p -> p.getPostStatus() == PostStatus.FAILED).count();
 
         if (scheduled == total) return "SCHEDULED";

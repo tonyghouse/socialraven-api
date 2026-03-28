@@ -15,7 +15,6 @@ public class PostResponse {
     private Long id;
     private Long postCollectionId;
     private Provider provider;
-    private String title;
     private String description;
     private String postStatus;
     private OffsetDateTime scheduledTime;

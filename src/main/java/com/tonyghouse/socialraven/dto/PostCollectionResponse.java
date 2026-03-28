@@ -13,7 +13,6 @@ import java.util.Map;
 @NoArgsConstructor
 public class PostCollectionResponse {
     private Long id;
-    private String title;
     private String description;
     private OffsetDateTime scheduledTime;
     private String postCollectionType;

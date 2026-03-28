@@ -9,8 +9,6 @@ import java.util.Map;
 @Data
 public class UpdatePostCollectionRequest {
 
-    private String title;
-
     private String description;
 
     private OffsetDateTime scheduledTime;

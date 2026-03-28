@@ -25,11 +25,9 @@ public class AnalyticsSnapshotScheduler {
 
     @Scheduled(cron = "0 */5 * * * ?", zone = "UTC")
     public void dispatchDueJobs() {
-        log.info("[AnalyticsScheduler] Running scheduled job");
         long nowMs = Instant.now().toEpochMilli();
         List<Long> jobIds = postRedisService.fetchIds(ANALYTICS_POOL, nowMs);
         if (jobIds.isEmpty()) {
-            log.info("[AnalyticsScheduler] No analytics jobs due.");
             return;
         }
         postRedisService.removePosts(ANALYTICS_POOL, jobIds);

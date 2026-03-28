@@ -31,10 +31,7 @@ public class OAuthRefreshScheduler {
      * Runs every 5 minutes
      */
     @Scheduled(cron = "0 */5 * * * ?", zone = "UTC")
-    public void publishPosts() {
-
-        log.info("[OAuthRefreshScheduler] Running scheduled job");
-
+    public void refreshOAuths() {
         String redisKey = "oauth-expiry-pool";
 
         long next5Min = Instant.now()
@@ -45,7 +42,6 @@ public class OAuthRefreshScheduler {
                 postRedisService.fetchIds(redisKey, next5Min);
 
         if (oauthInfoIds.isEmpty()) {
-            log.info("[OAuthRefreshScheduler] No OAuthInfos to refresh.");
             return;
         }
 

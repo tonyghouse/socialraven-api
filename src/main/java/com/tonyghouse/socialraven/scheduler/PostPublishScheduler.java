@@ -28,13 +28,10 @@ public class PostPublishScheduler {
     }
 
     /**
-     * Runs every 3 minutes
+     * Runs every 1 minute
      */
-    @Scheduled(cron = "0 */3 * * * ?", zone = "UTC")
+    @Scheduled(cron = "0 */1 * * * ?", zone = "UTC")
     public void publishPosts() {
-
-        log.info("[PostScheduler] Running scheduled job");
-
         String redisKey = getPostsPoolName();
 
         long next3Min = Instant.now()
@@ -45,7 +42,6 @@ public class PostPublishScheduler {
                 postRedisService.fetchIds(redisKey, next3Min);
 
         if (postIds.isEmpty()) {
-            log.info("[PostScheduler] No posts to publish.");
             return;
         }
 

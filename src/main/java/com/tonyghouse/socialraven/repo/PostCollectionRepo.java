@@ -1,6 +1,5 @@
 package com.tonyghouse.socialraven.repo;
 
-import com.tonyghouse.socialraven.constant.PostCollectionStatus;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -39,22 +38,21 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
             SELECT COUNT(pc)
             FROM PostCollectionEntity pc
             WHERE pc.workspaceId = :workspaceId
-              AND pc.postCollectionStatus <> :draft
+              AND pc.draft = false
               AND pc.scheduledTime >= :startOfMonth
             """)
     long countNonDraftPostsFromMonth(
             @Param("workspaceId") String workspaceId,
-            @Param("draft") PostCollectionStatus draft,
             @Param("startOfMonth") OffsetDateTime startOfMonth
     );
 
     // DRAFT — with optional search (no date range; drafts have no scheduledTime)
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus = com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search)",
+           "AND c.draft = true " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search)",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus = com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search)")
+           "AND c.draft = true " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search)")
     Page<PostCollectionEntity> findDraftCollections(
             @Param("workspaceId") String workspaceId,
             @Param("search") String search,
@@ -62,12 +60,12 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // DRAFT — with platform filter
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus = com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND c.draft = true " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus = com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND c.draft = true " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)")
     Page<PostCollectionEntity> findDraftCollectionsByPlatform(
             @Param("workspaceId") String workspaceId,
@@ -81,12 +79,12 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findScheduledCollections(
             @Param("workspaceId") String workspaceId,
@@ -99,13 +97,13 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findScheduledCollectionsByPlatform(
@@ -120,13 +118,13 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findScheduledCollectionsWithAccounts(
@@ -141,14 +139,14 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus != com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
@@ -165,16 +163,18 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
     // PUBLISHED — no platform filter
     // ──────────────────────────────────────────────────────────────────────────────
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findPublishedCollections(
             @Param("workspaceId") String workspaceId,
@@ -185,17 +185,19 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // PUBLISHED — with platform filter
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c " +
            "AND p.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
+           "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findPublishedCollectionsByPlatform(
@@ -208,17 +210,19 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // PUBLISHED — with account filter, no platform
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c " +
+           "AND p3.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c " +
+           "AND p3.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")
     Page<PostCollectionEntity> findPublishedCollectionsWithAccounts(
@@ -231,18 +235,20 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     // PUBLISHED — with account filter + platform
     @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p4 FROM PostEntity p4 WHERE p4.postCollection = c " +
+           "AND p4.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate",
            countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
-           "AND c.postCollectionStatus != com.tonyghouse.socialraven.constant.PostCollectionStatus.DRAFT " +
            "AND NOT EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c " +
            "AND p2.postStatus = com.tonyghouse.socialraven.constant.PostStatus.SCHEDULED) " +
-           "AND (:search IS NULL OR LOWER(c.title) LIKE :search OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p4 FROM PostEntity p4 WHERE p4.postCollection = c " +
+           "AND p4.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED) " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
            "AND EXISTS (SELECT p3 FROM PostEntity p3 WHERE p3.postCollection = c AND cast(p3.provider as String) = :platform) " +
            "AND p.providerUserId IN :providerUserIds " +
            "AND c.scheduledTime >= :fromDate AND c.scheduledTime <= :toDate")

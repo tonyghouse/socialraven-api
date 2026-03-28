@@ -11,8 +11,6 @@ import java.util.Map;
 @Data
 public class PostCollection {
 
-    private String title;
-
     private String description;
 
     private PostCollectionType postType;

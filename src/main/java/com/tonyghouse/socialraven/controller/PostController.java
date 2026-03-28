@@ -30,7 +30,7 @@ public class PostController {
     @GetMapping("/")
     public Page<PostResponse> getPosts(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "POSTED") PostStatus postStatus
+            @RequestParam(defaultValue = "PUBLISHED") PostStatus postStatus
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return postService.getUserPosts(userId, page, postStatus);

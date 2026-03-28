@@ -1,6 +1,5 @@
 package com.tonyghouse.socialraven.service.plan;
 
-import com.tonyghouse.socialraven.constant.PostCollectionStatus;
 import com.tonyghouse.socialraven.dto.plan.UsageStatsResponse;
 import com.tonyghouse.socialraven.entity.PlanConfigEntity;
 import com.tonyghouse.socialraven.entity.UserPlanEntity;
@@ -55,7 +54,7 @@ public class UsageService {
                 .withHour(0).withMinute(0).withSecond(0).withNano(0);
 
         long postsUsed = postCollectionRepo.countNonDraftPostsFromMonth(
-                workspaceId, PostCollectionStatus.DRAFT, startOfMonth);
+                workspaceId, startOfMonth);
 
         long accountsCount = oAuthInfoRepo.findAllByWorkspaceId(workspaceId).size();
 

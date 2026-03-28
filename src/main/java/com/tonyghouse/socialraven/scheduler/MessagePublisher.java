@@ -1,7 +1,9 @@
 package com.tonyghouse.socialraven.scheduler;
 
+import com.tonyghouse.socialraven.config.RabbitMQConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -15,36 +17,25 @@ import java.util.List;
 public class MessagePublisher {
 
     private final JedisPool jedisPool;
+    private final RabbitTemplate rabbitTemplate;
 
-    private static final String POST_QUEUE = "post:queue";
-    private static final String OAUTH_REFRESH_QUEUE = "oauth_refresh:queue";
     private static final String ANALYTICS_QUEUE = "analytics:queue";
 
     /**
-     * Push post IDs batch to FIFO queue
+     * Push post IDs to RabbitMQ post-publish-queue
      */
     public void publishPostIds(List<Long> postIdsBatch) {
         if (postIdsBatch == null || postIdsBatch.isEmpty()) return;
 
-        try (Jedis jedis = jedisPool.getResource()) {
-
-            Pipeline pipeline = jedis.pipelined();
-
-            for (Long id : postIdsBatch) {
-                pipeline.lpush(POST_QUEUE, id.toString());
-            }
-
-            pipeline.sync();
-
-            log.info("Published {} post jobs to queue", postIdsBatch.size());
-
-        } catch (Exception e) {
-            log.error("Failed publishing post batch", e);
+        for (Long id : postIdsBatch) {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.POST_PUBLISH_QUEUE, id.toString());
         }
+
+        log.info("Published {} post jobs to RabbitMQ", postIdsBatch.size());
     }
 
     /**
-     * Push analytics job IDs batch to analytics queue
+     * Push analytics job IDs batch to Redis analytics queue
      */
     public void publishAnalyticsJobIds(List<Long> jobIds) {
         if (jobIds == null || jobIds.isEmpty()) return;
@@ -67,25 +58,15 @@ public class MessagePublisher {
     }
 
     /**
-     * Push OAuth refresh IDs batch to queue
+     * Push OAuth refresh IDs to RabbitMQ oauth-refresh-queue
      */
     public void refreshOAuthInfoIds(List<Long> oauthInfoIdsBatch) {
         if (oauthInfoIdsBatch == null || oauthInfoIdsBatch.isEmpty()) return;
 
-        try (Jedis jedis = jedisPool.getResource()) {
-
-            Pipeline pipeline = jedis.pipelined();
-
-            for (Long id : oauthInfoIdsBatch) {
-                pipeline.lpush(OAUTH_REFRESH_QUEUE, id.toString());
-            }
-
-            pipeline.sync();
-
-            log.info("Published {} oauth refresh jobs", oauthInfoIdsBatch.size());
-
-        } catch (Exception e) {
-            log.error("Failed publishing oauth refresh batch", e);
+        for (Long id : oauthInfoIdsBatch) {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.OAUTH_REFRESH_QUEUE, id.toString());
         }
+
+        log.info("Published {} oauth refresh jobs to RabbitMQ", oauthInfoIdsBatch.size());
     }
 }
