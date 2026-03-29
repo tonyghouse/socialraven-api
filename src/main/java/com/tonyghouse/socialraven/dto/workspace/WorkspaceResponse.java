@@ -19,4 +19,5 @@ public class WorkspaceResponse {
     private WorkspaceRole role;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
+    private OffsetDateTime deletedAt;
 }

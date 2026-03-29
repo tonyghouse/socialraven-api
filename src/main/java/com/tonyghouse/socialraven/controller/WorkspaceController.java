@@ -26,6 +26,12 @@ public class WorkspaceController {
         return workspaceService.getMyWorkspaces(userId);
     }
 
+    @GetMapping("/deleted")
+    public List<WorkspaceResponse> getDeletedWorkspaces() {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return workspaceService.getDeletedWorkspaces(userId);
+    }
+
     /** Creates a new workspace (plan-gated by max_workspaces). */
     @PostMapping
     public WorkspaceResponse createWorkspace(@RequestBody CreateWorkspaceRequest request) {
@@ -49,11 +55,17 @@ public class WorkspaceController {
         return workspaceService.updateWorkspace(id, userId, request);
     }
 
-    /** Deletes a workspace. Only the OWNER may delete. */
+    /** Deletes a workspace. Requires ADMIN or OWNER role. */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteWorkspace(@PathVariable String id) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         workspaceService.deleteWorkspace(id, userId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/restore")
+    public WorkspaceResponse restoreWorkspace(@PathVariable String id) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return workspaceService.restoreWorkspace(id, userId);
     }
 }

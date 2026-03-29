@@ -11,9 +11,11 @@ import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceSettingsEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.repo.UserProfileRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceInvitationRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceSettingsRepo;
+import com.tonyghouse.socialraven.service.ClerkUserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -41,25 +43,60 @@ public class OnboardingService {
     @Autowired
     private WorkspaceSettingsRepo workspaceSettingsRepo;
 
+    @Autowired
+    private WorkspaceInvitationRepo workspaceInvitationRepo;
+
+    @Autowired
+    private ClerkUserService clerkUserService;
+
     /**
      * Returns onboarding status for the caller.
      * Returns completed=false if no user_profile row exists yet.
      */
     public OnboardingStatusResponse getStatus(String userId) {
         Optional<UserProfileEntity> profile = userProfileRepo.findById(userId);
+        List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
+
         if (profile.isEmpty()) {
-            return new OnboardingStatusResponse(false, null, null);
+            boolean hasAcceptedInviteHistory = false;
+            String email = clerkUserService.getUserEmail(userId);
+            if (email != null && !email.isBlank()) {
+                hasAcceptedInviteHistory = workspaceInvitationRepo.existsByInvitedEmailAndAcceptedAtIsNotNull(
+                        email.trim().toLowerCase());
+            }
+
+            if (memberships.isEmpty() && !hasAcceptedInviteHistory) {
+                return new OnboardingStatusResponse(false, null, null, false);
+            }
+
+            UserProfileEntity recoveredProfile = new UserProfileEntity();
+            recoveredProfile.setUserId(userId);
+            recoveredProfile.setUserType(UserType.INFLUENCER);
+            recoveredProfile.setStatus(UserStatus.ACTIVE);
+            recoveredProfile.setCanCreateWorkspaces(false);
+            recoveredProfile.setCreatedAt(OffsetDateTime.now());
+            recoveredProfile.setUpdatedAt(OffsetDateTime.now());
+            userProfileRepo.save(recoveredProfile);
+            profile = Optional.of(recoveredProfile);
+            log.info("Recovered missing user profile for invited teammate: userId={}", userId);
         }
 
-        // Return the first workspace the user owns (personal workspace for influencers)
-        List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
+        // Return the first owned workspace when present; otherwise any active membership.
         String workspaceId = memberships.stream()
                 .filter(m -> m.getRole() == WorkspaceRole.OWNER)
                 .map(WorkspaceMemberEntity::getWorkspaceId)
                 .findFirst()
+                .or(() -> memberships.stream()
+                        .map(WorkspaceMemberEntity::getWorkspaceId)
+                        .findFirst())
                 .orElse(null);
 
-        return new OnboardingStatusResponse(true, profile.get().getUserType().name(), workspaceId);
+        return new OnboardingStatusResponse(
+                true,
+                profile.get().getUserType().name(),
+                workspaceId,
+                profile.get().isCanCreateWorkspaces()
+        );
     }
 
     /**
@@ -104,6 +141,7 @@ public class OnboardingService {
             profile.setUserId(userId);
             profile.setUserType(userType);
             profile.setStatus(UserStatus.ACTIVE);
+            profile.setCanCreateWorkspaces(true);
             profile.setCreatedAt(now);
             profile.setUpdatedAt(now);
             userProfileRepo.save(profile);
@@ -111,6 +149,7 @@ public class OnboardingService {
             UserProfileEntity profile = userProfileRepo.findById(userId).orElseThrow();
             profile.setUserType(userType);
             profile.setStatus(UserStatus.ACTIVE);
+            profile.setCanCreateWorkspaces(true);
             profile.setUpdatedAt(now);
             userProfileRepo.save(profile);
             log.info("User reactivated via re-onboarding: userId={}", userId);
@@ -170,7 +209,7 @@ public class OnboardingService {
 
         log.info("Onboarding completed for user {} as {} with {} workspace(s), active={}",
                 userId, userType, namesToCreate.size(), activeWorkspaceId);
-        return new OnboardingStatusResponse(true, userType.name(), activeWorkspaceId);
+        return new OnboardingStatusResponse(true, userType.name(), activeWorkspaceId, true);
     }
 
     /**

@@ -174,22 +174,11 @@ public class XOAuthService {
      * Get valid OAuth info (OAuth 1.0a tokens don't expire)
      */
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity authInfo) {
-        // OAuth 1.0a tokens don't expire, but verify they're still valid
-        try {
-            String tokenSecret = authInfo.getAdditionalInfo().getXTokenSecret();
-            if (tokenSecret == null) {
-                throw new RuntimeException("Missing X token secret. User needs to reconnect.");
-            }
-
-            // Optionally verify the token is still valid
-            verifyCredentials(authInfo.getAccessToken(), tokenSecret);
-
-            return authInfo;
-
-        } catch (Exception e) {
-            log.error("X OAuth token validation failed: {}", e.getMessage());
-            throw new RuntimeException("X token is invalid. User needs to reconnect their X account.", e);
+        String tokenSecret = authInfo.getAdditionalInfo().getXTokenSecret();
+        if (tokenSecret == null) {
+            throw new RuntimeException("Missing X token secret. User needs to reconnect.");
         }
+        return authInfo;
     }
 
     /**

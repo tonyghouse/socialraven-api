@@ -78,11 +78,16 @@ public class ClerkAuthenticationFilter extends OncePerRequestFilter {
      * Paths where INACTIVE users are still allowed through:
      *  - /onboarding/**  — so they can re-onboard and create a new workspace
      *  - /workspaces/invitations/accept — so they can accept a re-invitation
+     *  - GET /workspaces/mine — so empty-workspace users can load the correct shell
+     *  - POST /workspaces — so empty-workspace users can create a new workspace
      */
     private boolean isDeactivationWhitelisted(HttpServletRequest request) {
         String path = request.getServletPath();
+        String method = request.getMethod();
         return path.startsWith("/onboarding")
-                || path.equals("/workspaces/invitations/accept");
+                || path.equals("/workspaces/invitations/accept")
+                || ("GET".equalsIgnoreCase(method) && path.equals("/workspaces/mine"))
+                || ("POST".equalsIgnoreCase(method) && path.equals("/workspaces"));
     }
 
     /** Marker exception used to signal a deactivated account within the lambda above. */

@@ -14,4 +14,7 @@ public class OnboardingStatusResponse {
 
     /** The user's active workspace ID; null when completed=false */
     private String workspaceId;
+
+    /** Whether the user may create new workspaces outside onboarding. */
+    private boolean canCreateWorkspaces;
 }

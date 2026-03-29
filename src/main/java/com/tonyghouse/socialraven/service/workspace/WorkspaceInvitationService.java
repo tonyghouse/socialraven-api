@@ -5,6 +5,7 @@ import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.workspace.AcceptInviteRequest;
 import com.tonyghouse.socialraven.dto.workspace.InvitationResponse;
 import com.tonyghouse.socialraven.dto.workspace.InviteRequest;
+import com.tonyghouse.socialraven.entity.UserProfileEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceInvitationEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
@@ -26,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
+import static com.tonyghouse.socialraven.constant.UserType.INFLUENCER;
 
 @Service
 @Slf4j
@@ -168,8 +171,20 @@ public class WorkspaceInvitationService {
             throw new SocialRavenException("ADMIN or OWNER role required to revoke invitations", HttpStatus.FORBIDDEN);
         }
 
+        String invitedEmail = invitation.getInvitedEmail();
+        String workspaceName = getWorkspaceName(invitation.getWorkspaceId());
+        String revokedByName = resolveDisplayName(callerUserId);
+
         invitationRepo.delete(invitation);
         log.info("Invitation revoked: token={}, by={}", token, callerUserId);
+
+        if (invitedEmail != null && !invitedEmail.isBlank()) {
+            try {
+                emailService.sendInvitationRevokedEmail(invitedEmail.trim(), workspaceName, revokedByName);
+            } catch (Exception e) {
+                log.warn("Invitation revoked but notification email failed for {}: {}", invitedEmail, e.getMessage());
+            }
+        }
     }
 
     /**
@@ -221,17 +236,55 @@ public class WorkspaceInvitationService {
         invitation.setAcceptedAt(OffsetDateTime.now());
         invitationRepo.save(invitation);
 
-        // Reactivate the user if they were previously deactivated
-        userProfileRepo.findById(callerUserId).ifPresent(profile -> {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        // Ensure invited teammates also get a durable user_profile row.
+        userProfileRepo.findById(callerUserId).ifPresentOrElse(profile -> {
             if (profile.getStatus() == UserStatus.INACTIVE) {
                 profile.setStatus(UserStatus.ACTIVE);
-                profile.setUpdatedAt(OffsetDateTime.now());
+                profile.setUpdatedAt(now);
                 userProfileRepo.save(profile);
                 log.info("User reactivated via invitation acceptance: userId={}", callerUserId);
             }
+        }, () -> {
+            UserProfileEntity profile = new UserProfileEntity();
+            profile.setUserId(callerUserId);
+            profile.setUserType(INFLUENCER);
+            profile.setStatus(UserStatus.ACTIVE);
+            profile.setCanCreateWorkspaces(false);
+            profile.setCreatedAt(now);
+            profile.setUpdatedAt(now);
+            userProfileRepo.save(profile);
+            log.info("Created user profile via invitation acceptance: userId={}", callerUserId);
         });
 
         return workspaceId;
+    }
+
+    private String getWorkspaceName(String workspaceId) {
+        return workspaceRepo.findById(workspaceId)
+                .map(WorkspaceEntity::getName)
+                .orElse(workspaceId);
+    }
+
+    private String resolveDisplayName(String userId) {
+        ClerkUserService.UserProfile profile = clerkUserService.getUserProfile(userId);
+        if (profile == null) {
+            return userId;
+        }
+
+        String first = profile.firstName() != null ? profile.firstName().trim() : "";
+        String last = profile.lastName() != null ? profile.lastName().trim() : "";
+        String fullName = (first + " " + last).trim();
+        if (!fullName.isEmpty()) {
+            return fullName;
+        }
+
+        if (profile.email() != null && !profile.email().isBlank()) {
+            return profile.email().trim();
+        }
+
+        return userId;
     }
 
     private InvitationResponse toResponse(WorkspaceInvitationEntity e) {

@@ -5,8 +5,9 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 @Service
 public class PostRedisService {
@@ -56,6 +57,26 @@ public class PostRedisService {
                     .toArray(String[]::new);
 
             jedis.zrem(key, members);
+        }
+    }
+
+    public void removeIds(String key, List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zrem(key, ids.toArray(String[]::new));
+        }
+    }
+
+    public void addIds(String key, Map<String, Double> scoredIds) {
+        if (scoredIds == null || scoredIds.isEmpty()) {
+            return;
+        }
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zadd(key, new LinkedHashMap<>(scoredIds));
         }
     }
 }

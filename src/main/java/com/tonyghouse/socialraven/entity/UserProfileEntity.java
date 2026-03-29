@@ -24,6 +24,9 @@ public class UserProfileEntity {
     @Column(name = "status", length = 20, nullable = false)
     private UserStatus status = UserStatus.ACTIVE;
 
+    @Column(name = "can_create_workspaces", nullable = false)
+    private boolean canCreateWorkspaces;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
