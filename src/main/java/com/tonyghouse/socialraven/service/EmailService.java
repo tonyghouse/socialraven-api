@@ -1,22 +1,32 @@
 package com.tonyghouse.socialraven.service;
 
-import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.resend.Resend;
 import com.resend.services.emails.model.CreateEmailOptions;
+import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.thymeleaf.TemplateEngine;
+import org.thymeleaf.context.Context;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
 @Slf4j
 public class EmailService {
 
+    private static final String INVITATION_TEMPLATE = "email/workspace-invitation";
+    private static final String NOTIFICATION_TEMPLATE = "email/workspace-notification";
+
     @Autowired
     private Resend resendClient;
+
+    @Autowired
+    private TemplateEngine templateEngine;
 
     @Value("${resend.from}")
     private String fromAddress;
@@ -31,28 +41,29 @@ public class EmailService {
                                     UUID token) {
         String inviteLink = appBaseUrl + "/invite?token=" + token;
         String workspaceList = String.join(", ", workspaceNames);
-        String roleName = role.name().charAt(0) + role.name().substring(1).toLowerCase();
+        String roleName = formatRole(role);
+        String subject = inviterName + " invited you to SocialRaven";
 
-        String subject = inviterName + " invited you to " + workspaceList + " on SocialRaven";
-        String htmlBody = buildInviteHtml(toEmail, workspaceNames, inviterName, roleName, inviteLink);
-        String textBody = buildInviteText(workspaceList, inviterName, roleName, inviteLink);
+        Context context = baseContext(
+                "Join your SocialRaven workspace invitation.",
+                "Workspace invitation",
+                "You've been invited to collaborate in SocialRaven",
+                "Review the invitation details below and accept when you're ready."
+        );
+        context.setVariable("inviterName", inviterName);
+        context.setVariable("roleName", roleName);
+        context.setVariable("inviteLink", inviteLink);
+        context.setVariable("workspaceNames", workspaceNames);
+        context.setVariable("singleWorkspace", workspaceNames.size() == 1);
+        context.setVariable("workspaceLabel", workspaceNames.size() == 1 ? "Workspace" : "Workspaces");
+        context.setVariable("footerMessage", "This invitation expires in 7 days. If you do not have an account yet, you will be prompted to create one.");
 
-        try {
-            CreateEmailOptions params = CreateEmailOptions.builder()
-                    .from(fromAddress)
-                    .to(toEmail)
-                    .subject(subject)
-                    .html(htmlBody)
-                    .text(textBody)
-                    .build();
+        String htmlBody = templateEngine.process(INVITATION_TEMPLATE, context);
+        String textBody = inviterName + " invited you to join " + workspaceList + " on SocialRaven as " + roleName + ".\n\n"
+                + "Accept invitation: " + inviteLink + "\n\n"
+                + "This invitation expires in 7 days.";
 
-            resendClient.emails().send(params);
-
-            log.info("Invitation email sent to={}, workspaces={}, token={}", toEmail, workspaceList, token);
-        } catch (Exception e) {
-            log.error("Failed to send invitation email to={}: {}", toEmail, e.getMessage(), e);
-            throw new RuntimeException("Failed to send invitation email", e);
-        }
+        sendEmail(toEmail, subject, htmlBody, textBody, "workspace invitation");
     }
 
     public void sendRoleChangedEmail(String toEmail,
@@ -60,83 +71,139 @@ public class EmailService {
                                      String changedByName,
                                      WorkspaceRole previousRole,
                                      WorkspaceRole newRole) {
-        String subject = "Your SocialRaven workspace role has changed";
-        String htmlBody = buildRoleChangedHtml(
-                workspaceName,
-                changedByName,
-                formatRole(previousRole),
-                formatRole(newRole)
-        );
-        String textBody = buildRoleChangedText(
-                workspaceName,
-                changedByName,
-                formatRole(previousRole),
-                formatRole(newRole)
+        Context context = notificationContext(
+                "Your SocialRaven workspace role was updated.",
+                "Permissions update",
+                "Your role has changed",
+                "A teammate updated your permissions for this workspace.",
+                List.of(
+                        detail("Workspace", workspaceName),
+                        detail("Changed by", changedByName),
+                        detail("Previous role", formatRole(previousRole)),
+                        detail("New role", formatRole(newRole))
+                ),
+                "Review access",
+                "Open SocialRaven",
+                appBaseUrl,
+                "If this change was unexpected, review the workspace membership settings in SocialRaven."
         );
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "role change");
+        String textBody = "Your role for " + workspaceName + " on SocialRaven has changed.\n\n"
+                + "Changed by: " + changedByName + "\n"
+                + "Previous role: " + formatRole(previousRole) + "\n"
+                + "New role: " + formatRole(newRole) + "\n\n"
+                + "Open SocialRaven: " + appBaseUrl;
+
+        sendNotificationEmail(toEmail, "Your SocialRaven workspace role has changed", context, textBody, "role change");
     }
 
     public void sendMemberRemovedEmail(String toEmail,
                                        String workspaceName,
                                        String removedByName) {
-        String subject = "Your SocialRaven workspace access has been removed";
-        String htmlBody = buildMemberRemovedHtml(workspaceName, removedByName);
-        String textBody = buildMemberRemovedText(workspaceName, removedByName);
+        Context context = notificationContext(
+                "Your workspace access in SocialRaven was removed.",
+                "Access update",
+                "Your access has been removed",
+                "You no longer have access to this workspace.",
+                List.of(
+                        detail("Workspace", workspaceName),
+                        detail("Removed by", removedByName)
+                ),
+                "Need context?",
+                "Open SocialRaven",
+                appBaseUrl,
+                "If you still need access, contact a workspace admin or owner."
+        );
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "member removal");
+        String textBody = "Your access to " + workspaceName + " on SocialRaven has been removed.\n\n"
+                + "Removed by: " + removedByName + "\n\n"
+                + "Open SocialRaven: " + appBaseUrl;
+
+        sendNotificationEmail(toEmail, "Your SocialRaven workspace access has been removed", context, textBody, "member removal");
     }
 
     public void sendInvitationRevokedEmail(String toEmail,
                                            String workspaceName,
                                            String revokedByName) {
-        String subject = "Your SocialRaven invitation has been canceled";
-        String htmlBody = buildInvitationRevokedHtml(workspaceName, revokedByName);
-        String textBody = buildInvitationRevokedText(workspaceName, revokedByName);
+        Context context = notificationContext(
+                "A pending SocialRaven invitation was canceled.",
+                "Invitation update",
+                "Your invitation was canceled",
+                "This invitation is no longer valid and the link can no longer be used.",
+                List.of(
+                        detail("Workspace", workspaceName),
+                        detail("Canceled by", revokedByName)
+                ),
+                "Invite status",
+                null,
+                null,
+                "If you still need access, ask a workspace admin or owner to send a new invitation."
+        );
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "invitation revocation");
+        String textBody = "Your invitation to " + workspaceName + " on SocialRaven has been canceled.\n\n"
+                + "Canceled by: " + revokedByName + "\n"
+                + "This invite link can no longer be used.";
+
+        sendNotificationEmail(toEmail, "Your SocialRaven invitation has been canceled", context, textBody, "invitation revocation");
     }
 
     public void sendWorkspaceDeletedEmail(String toEmail,
                                           String workspaceName,
                                           String deletedByName) {
-        String subject = "A SocialRaven workspace was deleted";
-        String htmlBody = buildWorkspaceLifecycleHtml(
+        Context context = notificationContext(
+                "A SocialRaven workspace was moved to deleted workspaces.",
+                "Workspace update",
                 "Workspace deleted",
-                "This workspace has been moved to deleted workspaces.",
-                workspaceName,
-                "Deleted by",
-                deletedByName
-        );
-        String textBody = buildWorkspaceLifecycleText(
-                "Workspace deleted",
-                workspaceName,
-                "Deleted by",
-                deletedByName
+                "This workspace has been moved to deleted workspaces and is no longer active.",
+                List.of(
+                        detail("Workspace", workspaceName),
+                        detail("Deleted by", deletedByName)
+                ),
+                "Workspace status",
+                "Review workspaces",
+                appBaseUrl,
+                "Workspace owners can restore it later if needed."
         );
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "workspace deletion");
+        String textBody = "Workspace deleted: " + workspaceName + " on SocialRaven.\n\n"
+                + "Deleted by: " + deletedByName + "\n\n"
+                + "Open SocialRaven: " + appBaseUrl;
+
+        sendNotificationEmail(toEmail, "A SocialRaven workspace was deleted", context, textBody, "workspace deletion");
     }
 
     public void sendWorkspaceRestoredEmail(String toEmail,
                                            String workspaceName,
                                            String restoredByName) {
-        String subject = "A SocialRaven workspace was restored";
-        String htmlBody = buildWorkspaceLifecycleHtml(
+        Context context = notificationContext(
+                "A SocialRaven workspace was restored.",
+                "Workspace update",
                 "Workspace restored",
-                "This workspace is active again and can be used normally.",
-                workspaceName,
-                "Restored by",
-                restoredByName
-        );
-        String textBody = buildWorkspaceLifecycleText(
-                "Workspace restored",
-                workspaceName,
-                "Restored by",
-                restoredByName
+                "This workspace is active again and available for normal use.",
+                List.of(
+                        detail("Workspace", workspaceName),
+                        detail("Restored by", restoredByName)
+                ),
+                "Workspace status",
+                "Open SocialRaven",
+                appBaseUrl,
+                "You can return to the workspace to resume collaboration."
         );
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "workspace restore");
+        String textBody = "Workspace restored: " + workspaceName + " on SocialRaven.\n\n"
+                + "Restored by: " + restoredByName + "\n\n"
+                + "Open SocialRaven: " + appBaseUrl;
+
+        sendNotificationEmail(toEmail, "A SocialRaven workspace was restored", context, textBody, "workspace restore");
+    }
+
+    private void sendNotificationEmail(String toEmail,
+                                       String subject,
+                                       Context context,
+                                       String textBody,
+                                       String emailType) {
+        String htmlBody = templateEngine.process(NOTIFICATION_TEMPLATE, context);
+        sendEmail(toEmail, subject, htmlBody, textBody, emailType);
     }
 
     private void sendEmail(String toEmail,
@@ -161,211 +228,44 @@ public class EmailService {
         }
     }
 
-    private String buildInviteHtml(String toEmail,
-                                   List<String> workspaceNames,
-                                   String inviterName,
-                                   String roleName,
-                                   String inviteLink) {
-        StringBuilder workspaceItems = new StringBuilder();
-        for (String ws : workspaceNames) {
-            workspaceItems.append(
-                "<tr><td style=\"padding:10px 16px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;\">")
-                .append(escapeHtml(ws))
-                .append("</td></tr>");
-        }
-
-        String workspaceSection = workspaceNames.size() == 1
-                ? "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspace</p>" +
-                  "<p style=\"margin:0 0 28px;font-size:16px;font-weight:600;color:#111827;\">" + escapeHtml(workspaceNames.get(0)) + "</p>"
-                : "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspaces</p>" +
-                  "<table style=\"width:100%;border-collapse:collapse;margin-bottom:28px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;\">" +
-                  workspaceItems + "</table>";
-
-        return "<!DOCTYPE html>" +
-            "<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>" +
-            "<body style=\"margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">" +
-            "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;padding:40px 16px;\">" +
-            "<tr><td align=\"center\">" +
-            "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;\">" +
-
-            // Header
-            "<tr><td style=\"padding-bottom:24px;\">" +
-            "<img src=\"https://socialraven.io/SocialRavenLogo.svg\" alt=\"SocialRaven\" style=\"height:36px;\">" +
-            "</td></tr>" +
-
-            // Card
-            "<tr><td style=\"background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:40px 36px;\">" +
-
-            // Title
-            "<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;\">You've been invited</h1>" +
-            "<p style=\"margin:0 0 28px;font-size:15px;color:#6b7280;\">You've been invited to collaborate on SocialRaven.</p>" +
-
-            // Inviter row
-            "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Invited by</p>" +
-            "<p style=\"margin:0 0 28px;font-size:15px;color:#111827;\">" + escapeHtml(inviterName) + "</p>" +
-
-            // Workspace(s)
-            workspaceSection +
-
-            // Role
-            "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Your role</p>" +
-            "<p style=\"margin:0 0 32px;font-size:15px;color:#111827;\">" + escapeHtml(roleName) + "</p>" +
-
-            // CTA button
-            "<a href=\"" + escapeHtml(inviteLink) + "\" style=\"display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:13px 28px;border-radius:8px;font-size:15px;font-weight:600;\">Accept invitation</a>" +
-
-            // Footer note inside card
-            "<p style=\"margin:24px 0 0;font-size:13px;color:#9ca3af;\">This invitation expires in 7&nbsp;days. If you don't have an account yet, you'll be asked to create one.</p>" +
-
-            "</td></tr>" +
-
-            // Bottom link
-            "<tr><td style=\"padding:20px 0 0;\">" +
-            "<p style=\"margin:0;font-size:12px;color:#9ca3af;word-break:break-all;\">Or paste this link in your browser: <a href=\"" + escapeHtml(inviteLink) + "\" style=\"color:#6b7280;\">" + escapeHtml(inviteLink) + "</a></p>" +
-            "</td></tr>" +
-
-            "</table>" +
-            "</td></tr></table>" +
-            "</body></html>";
+    private Context notificationContext(String preheader,
+                                        String eyebrow,
+                                        String title,
+                                        String intro,
+                                        List<Map<String, String>> details,
+                                        String panelLabel,
+                                        String actionLabel,
+                                        String actionUrl,
+                                        String footerMessage) {
+        Context context = baseContext(preheader, eyebrow, title, intro);
+        context.setVariable("details", details);
+        context.setVariable("panelLabel", panelLabel);
+        context.setVariable("actionLabel", actionLabel);
+        context.setVariable("actionUrl", actionUrl);
+        context.setVariable("footerMessage", footerMessage);
+        return context;
     }
 
-    private String buildInviteText(String workspaceList,
-                                   String inviterName,
-                                   String roleName,
-                                   String inviteLink) {
-        return inviterName + " has invited you to join " + workspaceList + " on SocialRaven as " + roleName + ".\n\n" +
-                "Accept the invitation:\n" + inviteLink + "\n\n" +
-                "This invitation expires in 7 days.";
+    private Context baseContext(String preheader,
+                                String eyebrow,
+                                String title,
+                                String intro) {
+        Context context = new Context(Locale.ENGLISH);
+        context.setVariable("preheader", preheader);
+        context.setVariable("eyebrow", eyebrow);
+        context.setVariable("title", title);
+        context.setVariable("intro", intro);
+        context.setVariable("productName", "SocialRaven");
+        context.setVariable("supportUrl", appBaseUrl);
+        return context;
     }
 
-    private String buildRoleChangedHtml(String workspaceName,
-                                        String changedByName,
-                                        String previousRole,
-                                        String newRole) {
-        return "<!DOCTYPE html>" +
-                "<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>" +
-                "<body style=\"margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;padding:40px 16px;\">" +
-                "<tr><td align=\"center\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;\">" +
-                "<tr><td style=\"padding-bottom:24px;\">" +
-                "<img src=\"https://socialraven.io/SocialRavenLogo.svg\" alt=\"SocialRaven\" style=\"height:36px;\">" +
-                "</td></tr>" +
-                "<tr><td style=\"background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:40px 36px;\">" +
-                "<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;\">Your role has changed</h1>" +
-                "<p style=\"margin:0 0 28px;font-size:15px;color:#6b7280;\">Your teammate permissions on SocialRaven were updated.</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspace</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(workspaceName) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Changed by</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(changedByName) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Previous role</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(previousRole) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">New role</p>" +
-                "<p style=\"margin:0;font-size:15px;color:#111827;\">" + escapeHtml(newRole) + "</p>" +
-                "</td></tr></table></td></tr></table></body></html>";
-    }
-
-    private String buildRoleChangedText(String workspaceName,
-                                        String changedByName,
-                                        String previousRole,
-                                        String newRole) {
-        return "Your role for " + workspaceName + " on SocialRaven has changed.\n\n" +
-                "Changed by: " + changedByName + "\n" +
-                "Previous role: " + previousRole + "\n" +
-                "New role: " + newRole;
-    }
-
-    private String buildMemberRemovedHtml(String workspaceName, String removedByName) {
-        return "<!DOCTYPE html>" +
-                "<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>" +
-                "<body style=\"margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;padding:40px 16px;\">" +
-                "<tr><td align=\"center\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;\">" +
-                "<tr><td style=\"padding-bottom:24px;\">" +
-                "<img src=\"https://socialraven.io/SocialRavenLogo.svg\" alt=\"SocialRaven\" style=\"height:36px;\">" +
-                "</td></tr>" +
-                "<tr><td style=\"background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:40px 36px;\">" +
-                "<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;\">Your access has been removed</h1>" +
-                "<p style=\"margin:0 0 28px;font-size:15px;color:#6b7280;\">You are no longer a teammate in this SocialRaven workspace.</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspace</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(workspaceName) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Removed by</p>" +
-                "<p style=\"margin:0;font-size:15px;color:#111827;\">" + escapeHtml(removedByName) + "</p>" +
-                "</td></tr></table></td></tr></table></body></html>";
-    }
-
-    private String buildMemberRemovedText(String workspaceName, String removedByName) {
-        return "Your access to " + workspaceName + " on SocialRaven has been removed.\n\n" +
-                "Removed by: " + removedByName;
-    }
-
-    private String buildInvitationRevokedHtml(String workspaceName, String revokedByName) {
-        return "<!DOCTYPE html>" +
-                "<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>" +
-                "<body style=\"margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;padding:40px 16px;\">" +
-                "<tr><td align=\"center\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;\">" +
-                "<tr><td style=\"padding-bottom:24px;\">" +
-                "<img src=\"https://socialraven.io/SocialRavenLogo.svg\" alt=\"SocialRaven\" style=\"height:36px;\">" +
-                "</td></tr>" +
-                "<tr><td style=\"background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:40px 36px;\">" +
-                "<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;\">Your invitation was canceled</h1>" +
-                "<p style=\"margin:0 0 28px;font-size:15px;color:#6b7280;\">This workspace invitation is no longer valid.</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspace</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(workspaceName) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Canceled by</p>" +
-                "<p style=\"margin:0;font-size:15px;color:#111827;\">" + escapeHtml(revokedByName) + "</p>" +
-                "</td></tr></table></td></tr></table></body></html>";
-    }
-
-    private String buildInvitationRevokedText(String workspaceName, String revokedByName) {
-        return "Your invitation to " + workspaceName + " on SocialRaven has been canceled.\n\n" +
-                "Canceled by: " + revokedByName + "\n" +
-                "This invite link can no longer be used.";
-    }
-
-    private String buildWorkspaceLifecycleHtml(String title,
-                                               String subtitle,
-                                               String workspaceName,
-                                               String actorLabel,
-                                               String actorName) {
-        return "<!DOCTYPE html>" +
-                "<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>" +
-                "<body style=\"margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f9fafb;padding:40px 16px;\">" +
-                "<tr><td align=\"center\">" +
-                "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:520px;\">" +
-                "<tr><td style=\"padding-bottom:24px;\">" +
-                "<img src=\"https://socialraven.io/SocialRavenLogo.svg\" alt=\"SocialRaven\" style=\"height:36px;\">" +
-                "</td></tr>" +
-                "<tr><td style=\"background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:40px 36px;\">" +
-                "<h1 style=\"margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;\">" + escapeHtml(title) + "</h1>" +
-                "<p style=\"margin:0 0 28px;font-size:15px;color:#6b7280;\">" + escapeHtml(subtitle) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">Workspace</p>" +
-                "<p style=\"margin:0 0 24px;font-size:15px;color:#111827;\">" + escapeHtml(workspaceName) + "</p>" +
-                "<p style=\"margin:0 0 6px;font-size:13px;font-weight:600;color:#6b7280;letter-spacing:.05em;text-transform:uppercase;\">" + escapeHtml(actorLabel) + "</p>" +
-                "<p style=\"margin:0;font-size:15px;color:#111827;\">" + escapeHtml(actorName) + "</p>" +
-                "</td></tr></table></td></tr></table></body></html>";
-    }
-
-    private String buildWorkspaceLifecycleText(String title,
-                                               String workspaceName,
-                                               String actorLabel,
-                                               String actorName) {
-        return title + ": " + workspaceName + " on SocialRaven.\n\n" +
-                actorLabel + ": " + actorName;
+    private Map<String, String> detail(String label, String value) {
+        return Map.of("label", label, "value", value);
     }
 
     private String formatRole(WorkspaceRole role) {
-        return role.name().charAt(0) + role.name().substring(1).toLowerCase();
-    }
-
-    private String escapeHtml(String s) {
-        return s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;");
+        String normalized = role.name().toLowerCase(Locale.ENGLISH).replace('_', ' ');
+        return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
     }
 }
