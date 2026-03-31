@@ -1,5 +1,6 @@
 package com.tonyghouse.socialraven.repo;
 
+import com.tonyghouse.socialraven.constant.RecoveryState;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +30,31 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     /** Used by WorkspaceDeletionScheduler to cascade-delete posts and media via JPA. */
     List<PostCollectionEntity> findAllByWorkspaceId(String workspaceId);
+
+    @Query("""
+            SELECT DISTINCT pc
+            FROM PostCollectionEntity pc
+            LEFT JOIN FETCH pc.posts
+            WHERE pc.draft = false
+              AND pc.failureState = :failureState
+            """)
+    List<PostCollectionEntity> findAllNonDraftWithPostsByFailureState(
+            @Param("failureState") RecoveryState failureState
+    );
+
+    @Query("""
+            SELECT DISTINCT pc
+            FROM PostCollectionEntity pc
+            LEFT JOIN FETCH pc.posts
+            WHERE pc.draft = false
+              AND pc.failureState = :failureState
+              AND pc.nextNotificationAt IS NOT NULL
+              AND pc.nextNotificationAt <= :now
+            """)
+    List<PostCollectionEntity> findAllNonDraftWithPostsByFailureStateAndNextNotificationAtBefore(
+            @Param("failureState") RecoveryState failureState,
+            @Param("now") OffsetDateTime now
+    );
 
     /**
      * Counts non-draft post-collections for a workspace scheduled on or after startOfMonth.

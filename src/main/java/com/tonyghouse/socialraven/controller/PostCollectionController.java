@@ -82,4 +82,11 @@ public class PostCollectionController {
         return postService.scheduleDraftCollection(userId, id, request);
     }
 
+    @RequiresRole(WorkspaceRole.MEMBER)
+    @PostMapping("/{id}/recovery-draft")
+    public PostCollectionResponse createRecoveryDraft(@PathVariable Long id) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.createRecoveryDraft(userId, id);
+    }
+
 }

@@ -1,6 +1,7 @@
 package com.tonyghouse.socialraven.entity;
 
 import com.tonyghouse.socialraven.constant.PostCollectionType;
+import com.tonyghouse.socialraven.constant.RecoveryState;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -54,4 +55,30 @@ public class PostCollectionEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String platformConfigs;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "failure_state", nullable = false, length = 50)
+    private RecoveryState failureState = RecoveryState.NONE;
+
+    private OffsetDateTime failureDetectedAt;
+
+    @Column(length = 2000)
+    private String failureReasonSummary;
+
+    @Column(nullable = false)
+    private int notificationAttemptCount;
+
+    private OffsetDateTime lastNotificationSentAt;
+    private OffsetDateTime nextNotificationAt;
+    private OffsetDateTime notificationStoppedAt;
+
+    private Long recoveryCollectionId;
+    private Long recoverySourceCollectionId;
+
+    private OffsetDateTime handledAt;
+
+    @Column(length = 255)
+    private String handledBy;
+
+    private OffsetDateTime adminEscalatedAt;
 }

@@ -34,6 +34,9 @@ public class EmailService {
     @Value("${socialraven.app.base-url}")
     private String appBaseUrl;
 
+    @Value("${socialraven.recovery.admin-email:socialravenapp@gmail.com}")
+    private String recoveryAdminEmail;
+
     public void sendInvitationEmail(String toEmail,
                                     List<String> workspaceNames,
                                     String inviterName,
@@ -197,6 +200,77 @@ public class EmailService {
         sendNotificationEmail(toEmail, "A SocialRaven workspace was restored", context, textBody, "workspace restore");
     }
 
+    public void sendFailedCollectionRecoveryEmail(String toEmail,
+                                                  Long collectionId,
+                                                  String description,
+                                                  String failureReasonSummary,
+                                                  int attemptNumber) {
+        String recoveryLink = appBaseUrl + "/recovery-drafts/" + collectionId;
+        Context context = notificationContext(
+                "A SocialRaven post collection needs attention.",
+                "Publishing issue",
+                "Your post collection needs attention",
+                "We couldn't publish this collection to one or more selected channels. Create a recovery draft to fix the content or media and reschedule it.",
+                List.of(
+                        detail("Collection ID", String.valueOf(collectionId)),
+                        detail("Reminder attempt", String.valueOf(attemptNumber)),
+                        detail("Issue summary", failureReasonSummary),
+                        detail("Content preview", summarizeDescription(description))
+                ),
+                "Next step",
+                "Open Recovery Draft",
+                recoveryLink,
+                "Once you create a recovery draft, reminder emails for this collection will stop."
+        );
+
+        String textBody = "Your SocialRaven post collection needs attention.\n\n"
+                + "Collection ID: " + collectionId + "\n"
+                + "Reminder attempt: " + attemptNumber + "\n"
+                + "Issue summary: " + failureReasonSummary + "\n"
+                + "Content preview: " + summarizeDescription(description) + "\n\n"
+                + "Open Recovery Draft: " + recoveryLink;
+
+        sendNotificationEmail(toEmail, "Your SocialRaven post collection needs attention", context, textBody, "failed collection recovery");
+    }
+
+    public void sendFailedCollectionEscalationEmail(Long collectionId,
+                                                    String workspaceId,
+                                                    String ownerUserId,
+                                                    String ownerEmail,
+                                                    String description,
+                                                    int attemptCount) {
+        String recoveryLink = appBaseUrl + "/recovery-drafts/" + collectionId;
+        Context context = notificationContext(
+                "A failed SocialRaven post collection needs manual intervention.",
+                "Recovery escalation",
+                "A failed post collection needs manual intervention",
+                "The creator has not created a recovery draft after repeated reminders. Manual follow-up is now required to help complete the remaining channels.",
+                List.of(
+                        detail("Collection ID", String.valueOf(collectionId)),
+                        detail("Workspace ID", workspaceId),
+                        detail("Owner user ID", ownerUserId),
+                        detail("Owner email", ownerEmail != null && !ownerEmail.isBlank() ? ownerEmail : "Unavailable"),
+                        detail("Reminder attempts", String.valueOf(attemptCount)),
+                        detail("Content preview", summarizeDescription(description))
+                ),
+                "Intervention",
+                "Open Recovery Draft",
+                recoveryLink,
+                "Follow up with the workspace owner and create or guide the recovery draft manually if needed."
+        );
+
+        String textBody = "A failed SocialRaven post collection needs manual intervention.\n\n"
+                + "Collection ID: " + collectionId + "\n"
+                + "Workspace ID: " + workspaceId + "\n"
+                + "Owner user ID: " + ownerUserId + "\n"
+                + "Owner email: " + (ownerEmail != null && !ownerEmail.isBlank() ? ownerEmail : "Unavailable") + "\n"
+                + "Reminder attempts: " + attemptCount + "\n"
+                + "Content preview: " + summarizeDescription(description) + "\n\n"
+                + "Open Recovery Draft: " + recoveryLink;
+
+        sendNotificationEmail(recoveryAdminEmail, "SocialRaven recovery escalation required", context, textBody, "failed collection escalation");
+    }
+
     private void sendNotificationEmail(String toEmail,
                                        String subject,
                                        Context context,
@@ -267,5 +341,13 @@ public class EmailService {
     private String formatRole(WorkspaceRole role) {
         String normalized = role.name().toLowerCase(Locale.ENGLISH).replace('_', ' ');
         return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
+    }
+
+    private String summarizeDescription(String description) {
+        if (description == null || description.isBlank()) {
+            return "No description provided";
+        }
+        String normalized = description.trim().replaceAll("\\s+", " ");
+        return normalized.length() > 120 ? normalized.substring(0, 117) + "..." : normalized;
     }
 }

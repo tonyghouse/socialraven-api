@@ -3,6 +3,7 @@ package com.tonyghouse.socialraven.service.post;
 import com.tonyghouse.socialraven.constant.PostCollectionType;
 import com.tonyghouse.socialraven.constant.PostStatus;
 import com.tonyghouse.socialraven.constant.Provider;
+import com.tonyghouse.socialraven.constant.RecoveryState;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tonyghouse.socialraven.dto.ConnectedAccount;
@@ -219,6 +220,46 @@ public class PostService {
         }
         postCollectionRepo.delete(collection);
         log.info("Deleted post collection id={} for workspaceId={}", collectionId, workspaceId);
+    }
+
+    @Transactional
+    public PostCollectionResponse createRecoveryDraft(String userId, Long collectionId) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        PostCollectionEntity failedCollection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new SocialRavenException(
+                        "Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(failedCollection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
+        }
+        if (failedCollection.isDraft()) {
+            throw new SocialRavenException("Draft collections cannot create a recovery draft", HttpStatus.BAD_REQUEST);
+        }
+        if (!hasRecoverableFailedPosts(failedCollection.getPosts())) {
+            throw new SocialRavenException(
+                    "Recovery drafts are only available when one or more channels in the collection have failed",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        if (failedCollection.getFailureState() != RecoveryState.RECOVERY_REQUIRED
+                && failedCollection.getRecoveryCollectionId() == null) {
+            throw new SocialRavenException(
+                    "Recovery draft is not available for this collection yet",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        PostCollectionEntity existingRecovery = loadExistingRecoveryCollection(failedCollection, workspaceId);
+        if (existingRecovery != null) {
+            markFailedCollectionHandled(failedCollection, userId, existingRecovery.getId());
+            return buildResponse(existingRecovery, workspaceId);
+        }
+
+        PostCollectionEntity recoveryDraft = cloneAsRecoveryDraft(failedCollection, userId, workspaceId);
+        PostCollectionEntity savedRecoveryDraft = postCollectionRepo.save(recoveryDraft);
+
+        markFailedCollectionHandled(failedCollection, userId, savedRecoveryDraft.getId());
+
+        return buildResponse(savedRecoveryDraft, workspaceId);
     }
 
     @Transactional
@@ -478,6 +519,12 @@ public class PostService {
             Map<String, ConnectedAccount> connectedAccountMap) {
 
         List<PostEntity> posts = collection.getPosts();
+        int publishedChannelCount = posts != null
+                ? (int) posts.stream().filter(p -> p.getPostStatus() == PostStatus.PUBLISHED).count()
+                : 0;
+        int failedChannelCount = posts != null
+                ? (int) posts.stream().filter(p -> p.getPostStatus() == PostStatus.FAILED).count()
+                : 0;
 
         List<MediaResponse> mediaDtos = collection.getMediaFiles() != null
                 ? collection.getMediaFiles().stream()
@@ -516,7 +563,16 @@ public class PostService {
                 overallStatus,
                 postDtos,
                 mediaDtos,
-                platformConfigsMap
+                platformConfigsMap,
+                collection.getFailureState() != null ? collection.getFailureState().name() : RecoveryState.NONE.name(),
+                collection.getFailureReasonSummary(),
+                collection.getNotificationAttemptCount(),
+                collection.getRecoveryCollectionId(),
+                collection.getRecoverySourceCollectionId(),
+                collection.getFailureState() == RecoveryState.RECOVERY_REQUIRED,
+                collection.getRecoveryCollectionId() != null || collection.getFailureState() == RecoveryState.RECOVERED,
+                publishedChannelCount,
+                failedChannelCount
         );
     }
 
@@ -636,5 +692,89 @@ public class PostService {
         if (posted == total) return "PUBLISHED";
         if (failed == total) return "FAILED";
         return "PARTIAL_SUCCESS";
+    }
+
+    private PostCollectionEntity loadExistingRecoveryCollection(PostCollectionEntity failedCollection, String workspaceId) {
+        if (failedCollection.getRecoveryCollectionId() == null) {
+            return null;
+        }
+        return postCollectionRepo.findByIdAndWorkspaceId(failedCollection.getRecoveryCollectionId(), workspaceId)
+                .orElse(null);
+    }
+
+    private void markFailedCollectionHandled(PostCollectionEntity failedCollection, String userId, Long recoveryCollectionId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        failedCollection.setFailureState(RecoveryState.RECOVERED);
+        failedCollection.setRecoveryCollectionId(recoveryCollectionId);
+        failedCollection.setHandledAt(now);
+        failedCollection.setHandledBy(userId);
+        failedCollection.setNotificationStoppedAt(now);
+        failedCollection.setNextNotificationAt(null);
+        postCollectionRepo.save(failedCollection);
+    }
+
+    private PostCollectionEntity cloneAsRecoveryDraft(PostCollectionEntity failedCollection, String userId, String workspaceId) {
+        PostCollectionEntity recoveryDraft = new PostCollectionEntity();
+        recoveryDraft.setCreatedBy(userId);
+        recoveryDraft.setWorkspaceId(workspaceId);
+        recoveryDraft.setDescription(failedCollection.getDescription());
+        recoveryDraft.setDraft(true);
+        recoveryDraft.setPostCollectionType(failedCollection.getPostCollectionType());
+        recoveryDraft.setScheduledTime(null);
+        recoveryDraft.setPlatformConfigs(failedCollection.getPlatformConfigs());
+        recoveryDraft.setRecoverySourceCollectionId(failedCollection.getId());
+        recoveryDraft.setFailureState(RecoveryState.NONE);
+
+        List<PostMediaEntity> mediaCopies = failedCollection.getMediaFiles() != null
+                ? failedCollection.getMediaFiles().stream()
+                .map(media -> {
+                    PostMediaEntity copy = new PostMediaEntity();
+                    copy.setFileKey(media.getFileKey());
+                    copy.setFileName(media.getFileName());
+                    copy.setMimeType(media.getMimeType());
+                    copy.setSize(media.getSize());
+                    copy.setPostCollection(recoveryDraft);
+                    return copy;
+                })
+                .toList()
+                : List.of();
+        recoveryDraft.setMediaFiles(new ArrayList<>(mediaCopies));
+
+        List<PostEntity> postCopies = failedCollection.getPosts() != null
+                ? failedCollection.getPosts().stream()
+                .filter(post -> post.getPostStatus() == PostStatus.FAILED)
+                .map(post -> {
+                    PostEntity copy = new PostEntity();
+                    copy.setProvider(post.getProvider());
+                    copy.setProviderUserId(post.getProviderUserId());
+                    copy.setPostStatus(PostStatus.DRAFT);
+                    copy.setPostType(post.getPostType());
+                    copy.setScheduledTime(null);
+                    copy.setPostCollection(recoveryDraft);
+                    return copy;
+                })
+                .toList()
+                : List.of();
+        recoveryDraft.setPosts(new ArrayList<>(postCopies));
+
+        return recoveryDraft;
+    }
+
+    private PostCollectionResponse buildResponse(PostCollectionEntity collection, String workspaceId) {
+        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
+                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
+        return getPostCollectionResponse(collection, connectedAccountMap);
+    }
+
+    private boolean isAllFailed(List<PostEntity> posts) {
+        return posts != null
+                && !posts.isEmpty()
+                && posts.stream().allMatch(post -> post.getPostStatus() == PostStatus.FAILED);
+    }
+
+    private boolean hasRecoverableFailedPosts(List<PostEntity> posts) {
+        return posts != null
+                && posts.stream().anyMatch(post -> post.getPostStatus() == PostStatus.FAILED);
     }
 }

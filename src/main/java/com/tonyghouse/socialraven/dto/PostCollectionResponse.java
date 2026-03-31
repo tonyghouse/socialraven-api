@@ -21,4 +21,13 @@ public class PostCollectionResponse {
     private List<MediaResponse> media;
     /** Platform-specific configuration, e.g. YouTube title, Instagram alt text. */
     private Map<String, Object> platformConfigs;
+    private String failureState;
+    private String failureReasonSummary;
+    private Integer recoveryNotificationAttemptCount;
+    private Long recoveryCollectionId;
+    private Long recoverySourceCollectionId;
+    private boolean recoveryRequired;
+    private boolean recoveryHandled;
+    private Integer publishedChannelCount;
+    private Integer failedChannelCount;
 }
