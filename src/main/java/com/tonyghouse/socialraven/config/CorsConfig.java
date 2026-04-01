@@ -26,6 +26,10 @@ public class CorsConfig {
         ));
 
         configuration.setAllowedHeaders(List.of("*"));
+        configuration.setExposedHeaders(List.of(
+                "X-Presign-Latency-Ms",
+                "Server-Timing"
+        ));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source =

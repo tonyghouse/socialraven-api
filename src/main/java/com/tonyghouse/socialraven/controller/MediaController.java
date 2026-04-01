@@ -73,6 +73,7 @@ public class MediaController {
 
         return ResponseEntity.ok()
                 .header("X-Presign-Latency-Ms", String.valueOf(durationMs))
+                .header("Server-Timing", "presign;dur=" + durationMs)
                 .body(Map.of(
                         "uploadUrl", uploadUrl,
                         "fileKey", key
