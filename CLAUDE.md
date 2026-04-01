@@ -5,6 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run Commands
 
 ```bash
+# Build socialraven-common first (one-time, or after any common changes)
+cd ../socialraven-common && ./mvnw clean install -DskipTests
+
 # Build (skip tests)
 mvn clean package -DskipTests
 
@@ -20,15 +23,18 @@ mvn test -Dtest=ClassName
 # Run a single test method
 mvn test -Dtest=ClassName#methodName
 
-# Build Docker image
-docker build -t socialraven-api .
+# Build Docker image — must run from the deploy directory (context needs socialraven-common alongside socialraven-api)
+# docker build cannot be run from inside socialraven-api/ directly anymore.
+# On EC2 this is handled by deploy.sh + docker-compose.
+# Locally: docker build -f socialraven-api/Dockerfile -t socialraven-api .
+# (run from the directory that contains both socialraven-api/ and socialraven-common/)
 ```
 
 ## Project Overview
 
 Spring Boot 3.2.5 / Java 21 REST API for social media post scheduling and publishing across multiple platforms (LinkedIn, X/Twitter, YouTube, Instagram, Facebook).
 
-**Key dependencies:** Spring Web + Security, Spring Data JPA + PostgreSQL, Redis (Jedis), RabbitMQ (AMQP), AWS S3, Clerk authentication, MapStruct, Lombok.
+**Key dependencies:** Spring Web + Security, Spring Data JPA + PostgreSQL, Redis (Jedis), RabbitMQ (AMQP), AWS S3, Clerk authentication, MapStruct, Lombok, `socialraven-common` (email, shared enums).
 
 ## Architecture
 
@@ -63,7 +69,9 @@ Redis (via Jedis) is used for:
 - Schema: `socialraven`, DDL mode: `update`
 
 ### Key Constants
-`Provider.java`, `Platform.java`, `PostType.java`, `PostStatus.java` — use these enums rather than raw strings throughout the codebase.
+API-local enums: `Provider.java`, `Platform.java`, `PostType.java`, `PostStatus.java` — use these rather than raw strings.
+
+Shared enums (from `socialraven-common`): `WorkspaceRole.java`, `EmailCategory.java` — same package `com.tonyghouse.socialraven.constant`, available on the classpath via the common dependency.
 
 ### Exception Handling
 Throw `SocialRavenException` for business logic errors; `GlobalExceptionHandler` centralizes HTTP response mapping.
@@ -74,3 +82,5 @@ MapStruct mappers (`ProviderPlatformMapper`, `UserPlatformMapper`, `PostTypeMapp
 ## Docker
 
 Multi-stage build: Maven builder → Eclipse Temurin 21 JRE Alpine. JVM flags: `-Xms256m -Xmx512m -XX:+UseG1GC`. Tests are skipped in Docker builds.
+
+The Dockerfile expects the build context to be the **parent directory** containing both `socialraven-api/` and `socialraven-common/`. It builds `socialraven-common` first (installs to the container's local `.m2`), then builds the API. This is handled automatically by `deploy.sh` via `docker-compose.blue/green.yaml`.
