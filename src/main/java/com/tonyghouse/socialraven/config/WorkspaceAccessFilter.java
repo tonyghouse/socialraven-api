@@ -1,8 +1,7 @@
 package com.tonyghouse.socialraven.config;
 
-import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
+import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
-import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import jakarta.servlet.FilterChain;
@@ -31,9 +30,6 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
 
     @Autowired
     private WorkspaceMemberRepo workspaceMemberRepo;
-
-    @Autowired
-    private WorkspaceRepo workspaceRepo;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -74,21 +70,14 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
                 return;
             }
 
-            Optional<WorkspaceMemberEntity> membership =
-                    workspaceMemberRepo.findByWorkspaceIdAndUserId(requestedWorkspaceId, userId);
-            if (membership.isEmpty()) {
+            Optional<String> membershipRole =
+                    workspaceMemberRepo.findRoleInActiveWorkspace(requestedWorkspaceId, userId);
+            if (membershipRole.isEmpty()) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 return;
             }
 
-            // Reject access to soft-deleted workspaces (GDPR §5.6 — still in 30-day retention window)
-            boolean workspaceActive = workspaceRepo.findByIdAndDeletedAtIsNull(requestedWorkspaceId).isPresent();
-            if (!workspaceActive) {
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                return;
-            }
-
-            WorkspaceContext.set(requestedWorkspaceId, membership.get().getRole());
+            WorkspaceContext.set(requestedWorkspaceId, WorkspaceRole.valueOf(membershipRole.get()));
             filterChain.doFilter(request, response);
         } finally {
             WorkspaceContext.clear();

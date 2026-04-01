@@ -54,11 +54,9 @@ public class ClerkAuthenticationFilter extends OncePerRequestFilter {
                 // Block deactivated users unless they are re-onboarding or accepting a new invitation
                 if (!isDeactivationWhitelisted(request)) {
                     String userId = auth.getSub();
-                    userProfileRepo.findById(userId).ifPresent(profile -> {
-                        if (profile.getStatus() == UserStatus.INACTIVE) {
-                            throw new DeactivatedAccountException();
-                        }
-                    });
+                    if (userProfileRepo.existsByUserIdAndStatus(userId, UserStatus.INACTIVE)) {
+                        throw new DeactivatedAccountException();
+                    }
                 }
             }
         } catch (DeactivatedAccountException e) {
