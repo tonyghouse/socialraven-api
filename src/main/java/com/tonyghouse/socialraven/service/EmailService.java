@@ -2,6 +2,7 @@ package com.tonyghouse.socialraven.service;
 
 import com.resend.Resend;
 import com.resend.services.emails.model.CreateEmailOptions;
+import com.tonyghouse.socialraven.constant.EmailCategory;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,10 +27,13 @@ public class EmailService {
     private Resend resendClient;
 
     @Autowired
+    private ZohoMailService zohoMailService;
+
+    @Autowired
     private TemplateEngine templateEngine;
 
     @Value("${resend.from}")
-    private String fromAddress;
+    private String resendFromAddress;
 
     @Value("${socialraven.app.base-url}")
     private String appBaseUrl;
@@ -66,7 +70,7 @@ public class EmailService {
                 + "Accept invitation: " + inviteLink + "\n\n"
                 + "This invitation expires in 7 days.";
 
-        sendEmail(toEmail, subject, htmlBody, textBody, "workspace invitation");
+        sendEmail(toEmail, subject, htmlBody, textBody, "workspace invitation", EmailCategory.EXTERNAL);
     }
 
     public void sendRoleChangedEmail(String toEmail,
@@ -97,7 +101,7 @@ public class EmailService {
                 + "New role: " + formatRole(newRole) + "\n\n"
                 + "Open SocialRaven: " + appBaseUrl;
 
-        sendNotificationEmail(toEmail, "Your SocialRaven workspace role has changed", context, textBody, "role change");
+        sendNotificationEmail(toEmail, "Your SocialRaven workspace role has changed", context, textBody, "role change", EmailCategory.EXTERNAL);
     }
 
     public void sendMemberRemovedEmail(String toEmail,
@@ -122,7 +126,7 @@ public class EmailService {
                 + "Removed by: " + removedByName + "\n\n"
                 + "Open SocialRaven: " + appBaseUrl;
 
-        sendNotificationEmail(toEmail, "Your SocialRaven workspace access has been removed", context, textBody, "member removal");
+        sendNotificationEmail(toEmail, "Your SocialRaven workspace access has been removed", context, textBody, "member removal", EmailCategory.EXTERNAL);
     }
 
     public void sendInvitationRevokedEmail(String toEmail,
@@ -147,7 +151,7 @@ public class EmailService {
                 + "Canceled by: " + revokedByName + "\n"
                 + "This invite link can no longer be used.";
 
-        sendNotificationEmail(toEmail, "Your SocialRaven invitation has been canceled", context, textBody, "invitation revocation");
+        sendNotificationEmail(toEmail, "Your SocialRaven invitation has been canceled", context, textBody, "invitation revocation", EmailCategory.EXTERNAL);
     }
 
     public void sendWorkspaceDeletedEmail(String toEmail,
@@ -172,7 +176,7 @@ public class EmailService {
                 + "Deleted by: " + deletedByName + "\n\n"
                 + "Open SocialRaven: " + appBaseUrl;
 
-        sendNotificationEmail(toEmail, "A SocialRaven workspace was deleted", context, textBody, "workspace deletion");
+        sendNotificationEmail(toEmail, "A SocialRaven workspace was deleted", context, textBody, "workspace deletion", EmailCategory.EXTERNAL);
     }
 
     public void sendWorkspaceRestoredEmail(String toEmail,
@@ -197,7 +201,7 @@ public class EmailService {
                 + "Restored by: " + restoredByName + "\n\n"
                 + "Open SocialRaven: " + appBaseUrl;
 
-        sendNotificationEmail(toEmail, "A SocialRaven workspace was restored", context, textBody, "workspace restore");
+        sendNotificationEmail(toEmail, "A SocialRaven workspace was restored", context, textBody, "workspace restore", EmailCategory.EXTERNAL);
     }
 
     public void sendFailedCollectionRecoveryEmail(String toEmail,
@@ -230,7 +234,7 @@ public class EmailService {
                 + "Content preview: " + summarizeDescription(description) + "\n\n"
                 + "Open Recovery Draft: " + recoveryLink;
 
-        sendNotificationEmail(toEmail, "Your SocialRaven post collection needs attention", context, textBody, "failed collection recovery");
+        sendNotificationEmail(toEmail, "Your SocialRaven post collection needs attention", context, textBody, "failed collection recovery", EmailCategory.EXTERNAL);
     }
 
     public void sendFailedCollectionEscalationEmail(Long collectionId,
@@ -268,39 +272,78 @@ public class EmailService {
                 + "Content preview: " + summarizeDescription(description) + "\n\n"
                 + "Open Recovery Draft: " + recoveryLink;
 
-        sendNotificationEmail(recoveryAdminEmail, "SocialRaven recovery escalation required", context, textBody, "failed collection escalation");
+        sendNotificationEmail(recoveryAdminEmail, "SocialRaven recovery escalation required", context, textBody, "failed collection escalation", EmailCategory.INTERNAL);
     }
+
+    // -------------------------------------------------------------------------
+    // Internal routing
+    // -------------------------------------------------------------------------
 
     private void sendNotificationEmail(String toEmail,
                                        String subject,
                                        Context context,
                                        String textBody,
-                                       String emailType) {
+                                       String emailType,
+                                       EmailCategory category) {
         String htmlBody = templateEngine.process(NOTIFICATION_TEMPLATE, context);
-        sendEmail(toEmail, subject, htmlBody, textBody, emailType);
+        sendEmail(toEmail, subject, htmlBody, textBody, emailType, category);
     }
 
+    /**
+     * Routes email based on category:
+     *
+     * INTERNAL — Zoho first (sync, 3 retries). If Zoho fails → Resend (no retry).
+     * EXTERNAL — Resend first (no retry). If Resend fails → Zoho async fallback (3 retries, fire-and-forget).
+     */
     private void sendEmail(String toEmail,
                            String subject,
                            String htmlBody,
                            String textBody,
-                           String emailType) {
+                           String emailType,
+                           EmailCategory category) {
+        if (category == EmailCategory.INTERNAL) {
+            boolean sent = zohoMailService.sendWithRetry(toEmail, subject, htmlBody, textBody, emailType);
+            if (!sent) {
+                log.warn("Zoho exhausted for internal {} email to={}, falling back to Resend", emailType, toEmail);
+                sendViaResend(toEmail, subject, htmlBody, textBody, emailType);
+            }
+        } else {
+            boolean sent = sendViaResend(toEmail, subject, htmlBody, textBody, emailType);
+            if (!sent) {
+                log.warn("Resend failed for external {} email to={}, trying Zoho fallback", emailType, toEmail);
+                boolean zohoSent = zohoMailService.sendWithRetry(toEmail, subject, htmlBody, textBody, emailType);
+                if (!zohoSent) {
+                    log.error("All providers failed for external {} email to={}", emailType, toEmail);
+                }
+            }
+        }
+    }
+
+    private boolean sendViaResend(String toEmail,
+                                   String subject,
+                                   String htmlBody,
+                                   String textBody,
+                                   String emailType) {
         try {
             CreateEmailOptions params = CreateEmailOptions.builder()
-                    .from(fromAddress)
+                    .from(resendFromAddress)
                     .to(toEmail)
                     .subject(subject)
                     .html(htmlBody)
                     .text(textBody)
                     .build();
-
             resendClient.emails().send(params);
-            log.info("{} email sent to={}", emailType, toEmail);
+            log.info("Resend: {} email sent to={}", emailType, toEmail);
+            return true;
         } catch (Exception e) {
-            log.error("Failed to send {} email to={}: {}", emailType, toEmail, e.getMessage(), e);
-            throw new RuntimeException("Failed to send " + emailType + " email", e);
+            log.warn("Resend: failed to send {} email to={}: {}", emailType, toEmail, e.getMessage());
+            return false;
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private Context notificationContext(String preheader,
                                         String eyebrow,
