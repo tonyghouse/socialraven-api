@@ -16,6 +16,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -51,6 +53,9 @@ public class WorkspaceInvitationService {
 
     @Autowired
     private ClerkUserService clerkUserService;
+
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
 
     /**
      * Option A: invite by email to one or more workspaces at once.
@@ -221,14 +226,19 @@ public class WorkspaceInvitationService {
         String workspaceId = invitation.getWorkspaceId();
 
         // Check if already a member — idempotent
-        boolean alreadyMember = memberRepo.findByWorkspaceIdAndUserId(workspaceId, callerUserId).isPresent();
-        if (!alreadyMember) {
+        Optional<WorkspaceMemberEntity> existingMembership =
+                memberRepo.findByWorkspaceIdAndUserId(workspaceId, callerUserId);
+        if (existingMembership.isPresent()) {
+            requestAccessCacheService.cacheWorkspaceRole(
+                    workspaceId, callerUserId, existingMembership.get().getRole());
+        } else {
             WorkspaceMemberEntity member = new WorkspaceMemberEntity();
             member.setWorkspaceId(workspaceId);
             member.setUserId(callerUserId);
             member.setRole(invitation.getRole());
             member.setJoinedAt(OffsetDateTime.now());
             memberRepo.save(member);
+            requestAccessCacheService.cacheWorkspaceRole(workspaceId, callerUserId, invitation.getRole());
             log.info("Invitation accepted: userId={}, workspaceId={}", callerUserId, workspaceId);
         }
 
@@ -257,6 +267,7 @@ public class WorkspaceInvitationService {
             userProfileRepo.save(profile);
             log.info("Created user profile via invitation acceptance: userId={}", callerUserId);
         });
+        requestAccessCacheService.cacheUserStatus(callerUserId, UserStatus.ACTIVE);
 
         return workspaceId;
     }

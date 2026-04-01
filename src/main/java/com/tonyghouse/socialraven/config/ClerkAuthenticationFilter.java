@@ -4,6 +4,7 @@ import com.clerk.backend_api.helpers.security.models.SessionAuthObjectV2;
 import com.tonyghouse.socialraven.constant.UserStatus;
 import com.tonyghouse.socialraven.model.ClerkAuthenticationToken;
 import com.tonyghouse.socialraven.repo.UserProfileRepo;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +29,9 @@ public class ClerkAuthenticationFilter extends OncePerRequestFilter {
 
     @Autowired
     private UserProfileRepo userProfileRepo;
+
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -54,7 +58,15 @@ public class ClerkAuthenticationFilter extends OncePerRequestFilter {
                 // Block deactivated users unless they are re-onboarding or accepting a new invitation
                 if (!isDeactivationWhitelisted(request)) {
                     String userId = auth.getSub();
-                    if (userProfileRepo.existsByUserIdAndStatus(userId, UserStatus.INACTIVE)) {
+                    UserStatus status = requestAccessCacheService.getUserStatus(userId)
+                            .orElseGet(() -> {
+                                boolean inactive = userProfileRepo.existsByUserIdAndStatus(userId, UserStatus.INACTIVE);
+                                UserStatus resolved = inactive ? UserStatus.INACTIVE : UserStatus.ACTIVE;
+                                requestAccessCacheService.cacheUserStatus(userId, resolved);
+                                return resolved;
+                            });
+
+                    if (status == UserStatus.INACTIVE) {
                         throw new DeactivatedAccountException();
                     }
                 }

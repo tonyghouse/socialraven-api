@@ -16,6 +16,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceSettingsRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -49,6 +50,9 @@ public class OnboardingService {
     @Autowired
     private ClerkUserService clerkUserService;
 
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
+
     /**
      * Returns onboarding status for the caller.
      * Returns completed=false if no user_profile row exists yet.
@@ -77,6 +81,7 @@ public class OnboardingService {
             recoveredProfile.setCreatedAt(OffsetDateTime.now());
             recoveredProfile.setUpdatedAt(OffsetDateTime.now());
             userProfileRepo.save(recoveredProfile);
+            requestAccessCacheService.cacheUserStatus(userId, UserStatus.ACTIVE);
             profile = Optional.of(recoveredProfile);
             log.info("Recovered missing user profile for invited teammate: userId={}", userId);
         }
@@ -154,6 +159,7 @@ public class OnboardingService {
             userProfileRepo.save(profile);
             log.info("User reactivated via re-onboarding: userId={}", userId);
         }
+        requestAccessCacheService.cacheUserStatus(userId, UserStatus.ACTIVE);
 
         // 2. Determine workspace names to create
         List<String> namesToCreate;
@@ -197,6 +203,7 @@ public class OnboardingService {
             member.setRole(WorkspaceRole.OWNER);
             member.setJoinedAt(now);
             workspaceMemberRepo.save(member);
+            requestAccessCacheService.cacheWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
             WorkspaceSettingsEntity settings = new WorkspaceSettingsEntity();
             settings.setWorkspaceId(workspaceId);

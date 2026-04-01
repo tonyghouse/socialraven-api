@@ -24,6 +24,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.scheduler.PostRedisService;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -73,6 +74,9 @@ public class WorkspaceService {
 
     @Autowired
     private EmailService emailService;
+
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
 
     /**
      * Returns all workspaces the caller belongs to, with their role in each.
@@ -152,6 +156,7 @@ public class WorkspaceService {
         member.setRole(WorkspaceRole.OWNER);
         member.setJoinedAt(now);
         workspaceMemberRepo.save(member);
+        requestAccessCacheService.cacheWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
 
         log.info("Workspace created: id={}, owner={}", workspaceId, userId);
         return toResponse(workspace, WorkspaceRole.OWNER);
@@ -225,6 +230,7 @@ public class WorkspaceService {
         workspace.setDeletedAt(now);
         workspace.setUpdatedAt(now);
         workspaceRepo.save(workspace);
+        requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
         disableWorkspaceQueues(workspaceId);
         notifyWorkspaceMembers(workspaceId, workspace.getName(), userId, true);
         log.info("Workspace soft-deleted (30-day retention): id={}, by userId={}", workspaceId, userId);
@@ -250,6 +256,7 @@ public class WorkspaceService {
         workspace.setDeletedAt(null);
         workspace.setUpdatedAt(OffsetDateTime.now());
         workspaceRepo.save(workspace);
+        requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
         restoreWorkspaceQueues(workspaceId);
         notifyWorkspaceMembers(workspaceId, workspace.getName(), userId, false);
         log.info("Workspace restored: id={}, by userId={}", workspaceId, userId);

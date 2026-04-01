@@ -2,8 +2,17 @@ package com.tonyghouse.socialraven.scheduler;
 
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
-import com.tonyghouse.socialraven.repo.*;
-import com.tonyghouse.socialraven.repo.*;
+import com.tonyghouse.socialraven.repo.AccountAnalyticsSnapshotRepo;
+import com.tonyghouse.socialraven.repo.AnalyticsJobRepo;
+import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.repo.PostAnalyticsSnapshotRepo;
+import com.tonyghouse.socialraven.repo.PostCollectionRepo;
+import com.tonyghouse.socialraven.repo.UserPlanRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceInvitationRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceSettingsRepo;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,6 +45,7 @@ public class WorkspaceDeletionScheduler {
     @Autowired private AnalyticsJobRepo analyticsJobRepo;
     @Autowired private PostAnalyticsSnapshotRepo postAnalyticsSnapshotRepo;
     @Autowired private AccountAnalyticsSnapshotRepo accountAnalyticsSnapshotRepo;
+    @Autowired private RequestAccessCacheService requestAccessCacheService;
 
     @Scheduled(cron = "0 0 3 * * ?", zone = "UTC")  // 03:00 UTC daily
     @Transactional
@@ -66,6 +76,8 @@ public class WorkspaceDeletionScheduler {
      * Order: analytics → posts/media (JPA cascade) → oauth → billing → invitations → settings → members → workspace
      */
     private void hardDelete(String workspaceId) {
+        requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
+
         // 1. Analytics snapshots and jobs (reference post_id / workspace_id)
         postAnalyticsSnapshotRepo.deleteAllByWorkspaceId(workspaceId);
         accountAnalyticsSnapshotRepo.deleteAllByWorkspaceId(workspaceId);

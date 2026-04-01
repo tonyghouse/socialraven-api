@@ -14,6 +14,15 @@ public class JedisConfig {
     @Value("${redis.public.url}")
     private String redisUrl;
 
+    @Value("${redis.pool.max-total:30}")
+    private int maxTotal;
+
+    @Value("${redis.pool.max-idle:10}")
+    private int maxIdle;
+
+    @Value("${redis.pool.min-idle:2}")
+    private int minIdle;
+
     @Bean
     public JedisPool jedisPool() {
 
@@ -27,9 +36,9 @@ public class JedisConfig {
         int port = uri.getPort() == -1 ? 6379 : uri.getPort();
 
         JedisPoolConfig poolConfig = new JedisPoolConfig();
-        poolConfig.setMaxTotal(10);
-        poolConfig.setMaxIdle(5);
-        poolConfig.setMinIdle(1);
+        poolConfig.setMaxTotal(maxTotal);
+        poolConfig.setMaxIdle(maxIdle);
+        poolConfig.setMinIdle(minIdle);
 
         if (uri.getUserInfo() != null) {
             String[] userInfoParts = uri.getUserInfo().split(":", 2);

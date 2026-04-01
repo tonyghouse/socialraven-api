@@ -2,6 +2,7 @@ package com.tonyghouse.socialraven.config;
 
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import jakarta.servlet.FilterChain;
@@ -30,6 +31,9 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
 
     @Autowired
     private WorkspaceMemberRepo workspaceMemberRepo;
+
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -70,6 +74,14 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
                 return;
             }
 
+            Optional<WorkspaceRole> cachedRole =
+                    requestAccessCacheService.getWorkspaceRole(requestedWorkspaceId, userId);
+            if (cachedRole.isPresent()) {
+                WorkspaceContext.set(requestedWorkspaceId, cachedRole.get());
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             Optional<String> membershipRole =
                     workspaceMemberRepo.findRoleInActiveWorkspace(requestedWorkspaceId, userId);
             if (membershipRole.isEmpty()) {
@@ -77,7 +89,9 @@ public class WorkspaceAccessFilter extends OncePerRequestFilter {
                 return;
             }
 
-            WorkspaceContext.set(requestedWorkspaceId, WorkspaceRole.valueOf(membershipRole.get()));
+            WorkspaceRole role = WorkspaceRole.valueOf(membershipRole.get());
+            requestAccessCacheService.cacheWorkspaceRole(requestedWorkspaceId, userId, role);
+            WorkspaceContext.set(requestedWorkspaceId, role);
             filterChain.doFilter(request, response);
         } finally {
             WorkspaceContext.clear();

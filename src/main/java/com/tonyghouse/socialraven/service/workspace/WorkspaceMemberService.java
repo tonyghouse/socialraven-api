@@ -11,6 +11,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
+import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -39,6 +40,9 @@ public class WorkspaceMemberService {
 
     @Autowired
     private ClerkUserService clerkUserService;
+
+    @Autowired
+    private RequestAccessCacheService requestAccessCacheService;
 
     /**
      * Returns all members of the workspace, enriched with Clerk profile data.
@@ -101,6 +105,7 @@ public class WorkspaceMemberService {
 
         target.setRole(newRole);
         memberRepo.save(target);
+        requestAccessCacheService.cacheWorkspaceRole(workspaceId, targetUserId, newRole);
         if (newRole == WorkspaceRole.ADMIN) {
             userProfileRepo.findById(targetUserId).ifPresentOrElse(profile -> {
                 if (!profile.isCanCreateWorkspaces()) {
@@ -108,6 +113,7 @@ public class WorkspaceMemberService {
                     profile.setUpdatedAt(OffsetDateTime.now());
                     userProfileRepo.save(profile);
                 }
+                requestAccessCacheService.cacheUserStatus(targetUserId, profile.getStatus());
             }, () -> {
                 UserProfileEntity profile = new UserProfileEntity();
                 profile.setUserId(targetUserId);
@@ -117,6 +123,7 @@ public class WorkspaceMemberService {
                 profile.setCreatedAt(OffsetDateTime.now());
                 profile.setUpdatedAt(OffsetDateTime.now());
                 userProfileRepo.save(profile);
+                requestAccessCacheService.cacheUserStatus(targetUserId, profile.getStatus());
             });
         }
         log.info("Member role updated: workspaceId={}, userId={}, newRole={}", workspaceId, targetUserId, newRole);
@@ -170,6 +177,7 @@ public class WorkspaceMemberService {
 
         ClerkUserService.UserProfile targetProfile = clerkUserService.getUserProfile(targetUserId);
         memberRepo.delete(target);
+        requestAccessCacheService.evictWorkspaceRole(workspaceId, targetUserId);
         log.info("Member removed: workspaceId={}, userId={}, by={}", workspaceId, targetUserId, callerUserId);
 
         if (targetProfile != null && targetProfile.email() != null && !targetProfile.email().isBlank()) {
