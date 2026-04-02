@@ -30,7 +30,7 @@ class EmailServiceTest {
 
         ReflectionTestUtils.setField(emailService, "resendClient", resendClient);
         ReflectionTestUtils.setField(emailService, "templateEngine", createTemplateEngine());
-        ReflectionTestUtils.setField(emailService, "fromAddress", "noreply@mail.socialraven.io");
+        ReflectionTestUtils.setField(emailService, "resendFromAddress", "support@mail.socialraven.io");
         ReflectionTestUtils.setField(emailService, "appBaseUrl", "https://app.socialraven.io");
 
         emailService.sendInvitationEmail(
@@ -64,7 +64,7 @@ class EmailServiceTest {
 
         ReflectionTestUtils.setField(emailService, "resendClient", resendClient);
         ReflectionTestUtils.setField(emailService, "templateEngine", createTemplateEngine());
-        ReflectionTestUtils.setField(emailService, "fromAddress", "noreply@mail.socialraven.io");
+        ReflectionTestUtils.setField(emailService, "resendFromAddress", "support@mail.socialraven.io");
         ReflectionTestUtils.setField(emailService, "appBaseUrl", "https://app.socialraven.io");
 
         emailService.sendRoleChangedEmail(

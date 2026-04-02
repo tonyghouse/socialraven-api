@@ -8,6 +8,7 @@ import com.tonyghouse.socialraven.repo.PostCollectionRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +22,7 @@ public class FailedCollectionRecoveryScheduler {
 
     private static final int MAX_NOTIFICATION_ATTEMPTS = 10;
     private static final String DEFAULT_FAILURE_SUMMARY =
-            "We couldn't publish this collection to one or more selected channels. Review the media, content, or platform-specific settings and create a recovery draft.";
+            "We couldn't publish this collection to one or more selected channels. Review the media, content, or platform-specific settings, update the post, and reschedule it.";
 
     @Autowired
     private PostCollectionRepo postCollectionRepo;
@@ -84,6 +85,7 @@ public class FailedCollectionRecoveryScheduler {
                 collection.getId(),
                 collection.getDescription(),
                 failureSummary(collection),
+                failedChannels(collection.getPosts()),
                 nextAttempt
         );
 
@@ -105,6 +107,8 @@ public class FailedCollectionRecoveryScheduler {
                 collection.getCreatedBy(),
                 ownerEmail,
                 collection.getDescription(),
+                failureSummary(collection),
+                failedChannels(collection.getPosts()),
                 collection.getNotificationAttemptCount()
         );
 
@@ -125,5 +129,18 @@ public class FailedCollectionRecoveryScheduler {
         return collection.getFailureReasonSummary() != null && !collection.getFailureReasonSummary().isBlank()
                 ? collection.getFailureReasonSummary()
                 : DEFAULT_FAILURE_SUMMARY;
+    }
+
+    private List<String> failedChannels(List<PostEntity> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return List.of();
+        }
+        return posts.stream()
+                .filter(post -> post.getPostStatus() == PostStatus.FAILED)
+                .map(post -> post.getProvider() != null ? post.getProvider().name() : null)
+                .filter(provider -> provider != null && !provider.isBlank())
+                .distinct()
+                .sorted(Comparator.naturalOrder())
+                .toList();
     }
 }
