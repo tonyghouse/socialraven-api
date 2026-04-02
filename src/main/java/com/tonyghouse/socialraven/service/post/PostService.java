@@ -409,7 +409,7 @@ public class PostService {
         if (!workspaceId.equals(collection.getWorkspaceId())) {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId, false);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostCollectionResponse(collection, connectedAccountMap);
@@ -426,7 +426,7 @@ public class PostService {
                 : Sort.by("scheduledTime").descending();
         Pageable pageable = PageRequest.of(page, 12, sort);
 
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId, false);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
@@ -612,7 +612,7 @@ public class PostService {
                 ? Pageable.unpaged()
                 : PageRequest.of(page, 12, Sort.by("scheduledTime").descending());
 
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId, false);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
 
@@ -630,7 +630,7 @@ public class PostService {
         if (!workspaceId.equals(post.getPostCollection().getWorkspaceId())) {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
+        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId, false);
         Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
         return getPostResponse(post, connectedAccountMap);

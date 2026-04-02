@@ -5,6 +5,7 @@ import com.tonyghouse.socialraven.dto.ConnectedAccount;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
@@ -24,12 +25,8 @@ public class InstagramProfileService {
             final String cleanAccessToken = accessToken.trim();
             final String cleanUserId = userId.trim();
 
-            log.info("=== DEBUGGING TOKEN FROM DATABASE (Trimmed) ===");
-            log.info("Provider User ID: {}", cleanUserId);
-            log.info("Token length: {}", cleanAccessToken.length());
-            // It is generally bad practice to log full tokens in production. Use log level DEBUG if necessary.
-            log.debug("Token full value: {}", cleanAccessToken);
-            log.info("=====================================");
+            log.debug("Fetching Instagram profile for providerUserId={}, tokenLength={}",
+                    cleanUserId, cleanAccessToken.length());
 
             // **FIXED:** Use the correct Instagram Graph API domain (graph.instagram.com)
             // and fields that are guaranteed to be available (username and id).
@@ -37,17 +34,17 @@ public class InstagramProfileService {
                     "?fields=id,username" + // profile_picture_url is not a standard field here
                     "&access_token=" + cleanAccessToken;
 
-            log.info("Making API call to: {}", url.replace(cleanAccessToken, "***TOKEN***"));
+            log.debug("Making API call to: {}", url.replace(cleanAccessToken, "***TOKEN***"));
 
             Map<String, Object> response = rest.getForObject(url, Map.class);
 
             if (response == null || response.get("username") == null) {
-                log.error("Invalid or empty response from Instagram API, or missing username field.");
+                log.warn("Instagram profile response missing username for providerUserId={}", cleanUserId);
                 return null;
             }
 
             String fetchedUsername = (String) response.get("username");
-            log.info("SUCCESS! Instagram profile fetched: {}", fetchedUsername);
+            log.debug("Instagram profile fetched for providerUserId={}", cleanUserId);
 
             ConnectedAccount dto = new ConnectedAccount();
             dto.setProviderUserId(cleanUserId);
@@ -60,8 +57,16 @@ public class InstagramProfileService {
 
             return dto;
 
+        } catch (HttpClientErrorException exp) {
+            log.warn("Instagram profile request failed: status={}, providerUserId={}, message={}",
+                    exp.getStatusCode().value(),
+                    info.getProviderUserId(),
+                    exp.getStatusText());
+            return null;
         } catch (Exception exp) {
-            log.error("Instagram Profile fetching Failed: {}", exp.getMessage(), exp);
+            log.warn("Instagram profile request failed for providerUserId={}: {}",
+                    info.getProviderUserId(),
+                    exp.getMessage());
             return null;
         }
     }
