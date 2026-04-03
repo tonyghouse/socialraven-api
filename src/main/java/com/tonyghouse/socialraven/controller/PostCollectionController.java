@@ -3,6 +3,7 @@ package com.tonyghouse.socialraven.controller;
 import com.tonyghouse.socialraven.annotation.RequiresRole;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.PostCollection;
+import com.tonyghouse.socialraven.dto.PostCollectionReviewActionRequest;
 import com.tonyghouse.socialraven.dto.PostCollectionResponse;
 import com.tonyghouse.socialraven.dto.ScheduleDraftRequest;
 import com.tonyghouse.socialraven.dto.UpdatePostCollectionRequest;
@@ -31,9 +32,9 @@ public class PostCollectionController {
     @Autowired
     private PostService postService;
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/schedule")
-    public PostCollection schedulePost(@RequestBody PostCollection postCollection) {
+    public PostCollectionResponse schedulePost(@RequestBody PostCollection postCollection) {
         return postService.schedulePostCollection(postCollection);
     }
 
@@ -56,7 +57,7 @@ public class PostCollectionController {
         return postService.getPostCollectionById(userId, id);
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deletePostCollection(@PathVariable Long id) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
@@ -64,7 +65,7 @@ public class PostCollectionController {
         return ResponseEntity.noContent().build();
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PatchMapping("/{id}")
     public PostCollectionResponse updatePostCollection(
             @PathVariable Long id,
@@ -73,7 +74,7 @@ public class PostCollectionController {
         return postService.updatePostCollection(userId, id, request);
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/{id}/schedule")
     public PostCollectionResponse scheduleDraft(
             @PathVariable Long id,
@@ -82,11 +83,29 @@ public class PostCollectionController {
         return postService.scheduleDraftCollection(userId, id, request);
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/{id}/recovery-draft")
     public PostCollectionResponse createRecoveryDraft(@PathVariable Long id) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return postService.createRecoveryDraft(userId, id);
+    }
+
+    @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/{id}/approve")
+    public PostCollectionResponse approvePostCollection(
+            @PathVariable Long id,
+            @RequestBody(required = false) PostCollectionReviewActionRequest request) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.approvePostCollection(userId, id, request);
+    }
+
+    @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/{id}/request-changes")
+    public PostCollectionResponse requestChanges(
+            @PathVariable Long id,
+            @RequestBody(required = false) PostCollectionReviewActionRequest request) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.requestChanges(userId, id, request);
     }
 
 }

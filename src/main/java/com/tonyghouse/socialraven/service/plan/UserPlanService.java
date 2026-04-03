@@ -6,14 +6,17 @@ import com.tonyghouse.socialraven.constant.UserType;
 import com.tonyghouse.socialraven.dto.plan.AdminPlanOverrideRequest;
 import com.tonyghouse.socialraven.dto.plan.ChangePlanRequest;
 import com.tonyghouse.socialraven.dto.plan.UserPlanResponse;
+import com.tonyghouse.socialraven.entity.CompanyEntity;
 import com.tonyghouse.socialraven.entity.PlanConfigEntity;
 import com.tonyghouse.socialraven.entity.UserPlanEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
+import com.tonyghouse.socialraven.repo.CompanyRepo;
 import com.tonyghouse.socialraven.repo.PlanConfigRepo;
 import com.tonyghouse.socialraven.repo.UserPlanRepo;
 import com.tonyghouse.socialraven.repo.UserProfileRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
+import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -22,9 +25,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Optional;
-
 @Slf4j
 @Service
 public class UserPlanService {
@@ -41,39 +41,75 @@ public class UserPlanService {
     @Autowired
     private UserProfileRepo userProfileRepo;
 
-    /**
-     * Returns the user's plan, auto-creating a 14-day TRIAL on first access.
-     */
+    @Autowired
+    private CompanyRepo companyRepo;
+
+    @Autowired
+    private CompanyAccessService companyAccessService;
+
     @Transactional
     public UserPlanResponse getUserPlan(String userId) {
-        UserPlanEntity entity = getOrCreate(userId);
-        return toResponse(entity);
+        String companyId = resolvePrimaryCompanyId(userId);
+        return toResponse(getOrCreateForCompany(companyId));
     }
 
-    /**
-     * Changes the authenticated user's plan.
-     * When Stripe is live, this will also create/update a Stripe subscription.
-     */
     @Transactional
     public UserPlanResponse changePlan(String userId, ChangePlanRequest request) {
+        String companyId = resolvePrimaryCompanyId(userId);
+        return changeCompanyPlan(companyId, request);
+    }
+
+    @Transactional
+    public UserPlanResponse adminOverride(String targetUserId, AdminPlanOverrideRequest request) {
+        String companyId = resolvePrimaryCompanyId(targetUserId);
+        return adminOverrideByCompanyId(companyId, request);
+    }
+
+    @Transactional
+    public UserPlanResponse getWorkspacePlan(String workspaceId) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        return toResponse(getOrCreateForCompany(workspace.getCompanyId()));
+    }
+
+    @Transactional
+    public UserPlanResponse changeWorkspacePlan(String workspaceId, ChangePlanRequest request) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        return changeCompanyPlan(workspace.getCompanyId(), request);
+    }
+
+    @Transactional
+    public UserPlanResponse adminOverrideByWorkspace(String workspaceId, AdminPlanOverrideRequest request) {
+        WorkspaceEntity workspace = requireWorkspace(workspaceId);
+        return adminOverrideByCompanyId(workspace.getCompanyId(), request);
+    }
+
+    public UserPlanEntity getOrCreateForCompany(String companyId) {
+        return userPlanRepo.findByCompanyId(companyId).orElseGet(() -> {
+            try {
+                return createTrial(companyId);
+            } catch (DataIntegrityViolationException e) {
+                return userPlanRepo.findByCompanyId(companyId)
+                        .orElseThrow(() -> new SocialRavenException("Plan unavailable for company: " + companyId, HttpStatus.INTERNAL_SERVER_ERROR));
+            }
+        });
+    }
+
+    private UserPlanResponse changeCompanyPlan(String companyId, ChangePlanRequest request) {
         PlanType newPlanType = request.getPlanType();
         if (newPlanType == null) {
             throw new SocialRavenException("planType is required", HttpStatus.BAD_REQUEST);
         }
-        // Verify plan config exists
+
         planConfigRepo.findById(newPlanType)
                 .orElseThrow(() -> new SocialRavenException("Unknown plan: " + newPlanType, HttpStatus.BAD_REQUEST));
 
-        UserPlanEntity entity = getOrCreate(userId);
-
+        UserPlanEntity entity = getOrCreateForCompany(companyId);
         if (entity.getPlanType() == newPlanType) {
             return toResponse(entity);
         }
 
         entity.setPlanType(newPlanType);
-
         if (newPlanType == PlanType.INFLUENCER_TRIAL || newPlanType == PlanType.AGENCY_TRIAL) {
-            // Downgrading back to trial is not normally allowed; treat as ACTIVE trial
             entity.setStatus(PlanStatus.TRIALING);
             OffsetDateTime trialEnd = OffsetDateTime.now().plusDays(14);
             entity.setTrialEndsAt(trialEnd);
@@ -86,22 +122,16 @@ public class UserPlanService {
 
         entity.setCancelAtPeriodEnd(false);
         entity.setUpdatedAt(OffsetDateTime.now());
-        // Clear any custom overrides when user voluntarily changes plan
         entity.setCustomPostsLimit(null);
         entity.setCustomAccountsLimit(null);
 
         userPlanRepo.save(entity);
-        log.info("User {} changed plan to {}", userId, newPlanType);
+        log.info("Company {} changed plan to {}", companyId, newPlanType);
         return toResponse(entity);
     }
 
-    /**
-     * Admin override — allows manually setting plan type, status, and custom limits
-     * for any user (e.g. agency customers with negotiated terms).
-     */
-    @Transactional
-    public UserPlanResponse adminOverride(String targetUserId, AdminPlanOverrideRequest request) {
-        UserPlanEntity entity = getOrCreate(targetUserId);
+    private UserPlanResponse adminOverrideByCompanyId(String companyId, AdminPlanOverrideRequest request) {
+        UserPlanEntity entity = getOrCreateForCompany(companyId);
 
         if (request.getPlanType() != null) {
             planConfigRepo.findById(request.getPlanType())
@@ -123,42 +153,10 @@ public class UserPlanService {
 
         entity.setUpdatedAt(OffsetDateTime.now());
         userPlanRepo.save(entity);
-        log.info("Admin override applied to user {}: plan={}, status={}, postsLimit={}, accountsLimit={}",
-                targetUserId, entity.getPlanType(), entity.getStatus(),
+        log.info("Admin override applied to company {}: plan={}, status={}, postsLimit={}, accountsLimit={}",
+                companyId, entity.getPlanType(), entity.getStatus(),
                 entity.getCustomPostsLimit(), entity.getCustomAccountsLimit());
         return toResponse(entity);
-    }
-
-    // ─── Workspace-scoped helpers ────────────────────────────────────────────────
-
-    /**
-     * Returns the plan for the given workspace.
-     * The plan is owned by workspace.ownerUserId; all workspace members share these limits.
-     */
-    @Transactional
-    public UserPlanResponse getWorkspacePlan(String workspaceId) {
-        WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        UserPlanEntity entity = getOrCreate(workspace.getOwnerUserId(), workspaceId);
-        return toResponse(entity);
-    }
-
-    /**
-     * Changes the plan for the given workspace.
-     * Only the workspace OWNER may call this (enforced via @RequiresRole in controller).
-     */
-    @Transactional
-    public UserPlanResponse changeWorkspacePlan(String workspaceId, ChangePlanRequest request) {
-        WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        return changePlan(workspace.getOwnerUserId(), request);
-    }
-
-    /**
-     * Admin override keyed by workspaceId (instead of userId).
-     */
-    @Transactional
-    public UserPlanResponse adminOverrideByWorkspace(String workspaceId, AdminPlanOverrideRequest request) {
-        WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        return adminOverride(workspace.getOwnerUserId(), request);
     }
 
     private WorkspaceEntity requireWorkspace(String workspaceId) {
@@ -166,36 +164,16 @@ public class UserPlanService {
                 .orElseThrow(() -> new SocialRavenException("Workspace not found: " + workspaceId, HttpStatus.NOT_FOUND));
     }
 
-    // ─── Internal helpers ────────────────────────────────────────────────────────
-
-    public UserPlanEntity getOrCreate(String userId, String workspaceId) {
-        Optional<UserPlanEntity> existing = userPlanRepo.findByUserId(userId);
-        if (existing.isPresent()) return existing.get();
-        try {
-            return createTrial(userId, workspaceId);
-        } catch (DataIntegrityViolationException e) {
-            // Concurrent request already created the plan; return it
-            return userPlanRepo.findByUserId(userId)
-                    .orElseThrow(() -> new SocialRavenException("Plan unavailable for user: " + userId, HttpStatus.INTERNAL_SERVER_ERROR));
-        }
+    private String resolvePrimaryCompanyId(String userId) {
+        return companyAccessService.findPrimaryCompanyId(userId)
+                .orElseThrow(() -> new SocialRavenException("No company found for user " + userId, HttpStatus.BAD_REQUEST));
     }
 
-    public UserPlanEntity getOrCreate(String userId) {
-        return userPlanRepo.findByUserId(userId).orElseGet(() -> {
-            List<WorkspaceEntity> owned = workspaceRepo.findAllByOwnerUserIdAndDeletedAtIsNull(userId);
-            String workspaceId = owned.isEmpty() ? null : owned.get(0).getId();
-            return createTrial(userId, workspaceId);
-        });
-    }
+    private UserPlanEntity createTrial(String companyId) {
+        CompanyEntity company = companyRepo.findById(companyId)
+                .orElseThrow(() -> new SocialRavenException("Company not found: " + companyId, HttpStatus.BAD_REQUEST));
 
-    private UserPlanEntity createTrial(String userId, String workspaceId) {
-        if (workspaceId == null) {
-            throw new SocialRavenException(
-                    "Cannot create trial plan: no workspace found for user " + userId,
-                    HttpStatus.BAD_REQUEST);
-        }
-
-        PlanType trialPlanType = userProfileRepo.findById(userId)
+        PlanType trialPlanType = userProfileRepo.findById(company.getOwnerUserId())
                 .map(profile -> profile.getUserType() == UserType.AGENCY ? PlanType.AGENCY_TRIAL : PlanType.INFLUENCER_TRIAL)
                 .orElse(PlanType.INFLUENCER_TRIAL);
 
@@ -206,8 +184,7 @@ public class UserPlanService {
         OffsetDateTime trialEnd = now.plusDays(trialConfig.getTrialDays() != null ? trialConfig.getTrialDays() : 14);
 
         UserPlanEntity entity = new UserPlanEntity();
-        entity.setUserId(userId);
-        entity.setWorkspaceId(workspaceId);
+        entity.setCompanyId(companyId);
         entity.setPlanType(trialPlanType);
         entity.setStatus(PlanStatus.TRIALING);
         entity.setRenewalDate(trialEnd);
@@ -217,7 +194,7 @@ public class UserPlanService {
         entity.setUpdatedAt(now);
 
         userPlanRepo.save(entity);
-        log.info("Created {} plan for new user {} in workspace {}", trialPlanType, userId, workspaceId);
+        log.info("Created {} plan for company {}", trialPlanType, companyId);
         return entity;
     }
 
@@ -225,8 +202,7 @@ public class UserPlanService {
         PlanConfigEntity config = planConfigRepo.findById(entity.getPlanType())
                 .orElseThrow(() -> new SocialRavenException("Plan config not found: " + entity.getPlanType(), HttpStatus.INTERNAL_SERVER_ERROR));
 
-        // Effective limits: custom override takes precedence over plan default
-        Integer effectivePostsLimit    = entity.getCustomPostsLimit()    != null ? entity.getCustomPostsLimit()    : config.getPostsPerMonth();
+        Integer effectivePostsLimit = entity.getCustomPostsLimit() != null ? entity.getCustomPostsLimit() : config.getPostsPerMonth();
         Integer effectiveAccountsLimit = entity.getCustomAccountsLimit() != null ? entity.getCustomAccountsLimit() : config.getAccountsLimit();
 
         UserPlanResponse resp = new UserPlanResponse();

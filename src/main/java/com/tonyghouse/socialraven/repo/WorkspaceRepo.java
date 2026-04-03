@@ -10,10 +10,8 @@ import java.util.Optional;
 
 @Repository
 public interface WorkspaceRepo extends JpaRepository<WorkspaceEntity, String> {
-    List<WorkspaceEntity> findAllByOwnerUserId(String ownerUserId);
-
-    /** Active (not soft-deleted) workspaces owned by a user — used for plan-gate checks. */
-    List<WorkspaceEntity> findAllByOwnerUserIdAndDeletedAtIsNull(String ownerUserId);
+    List<WorkspaceEntity> findAllByCompanyId(String companyId);
+    List<WorkspaceEntity> findAllByCompanyIdAndDeletedAtIsNull(String companyId);
 
     /** Active workspace by id — returns empty if soft-deleted. */
     Optional<WorkspaceEntity> findByIdAndDeletedAtIsNull(String id);

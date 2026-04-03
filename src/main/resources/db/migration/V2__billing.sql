@@ -18,18 +18,17 @@ VALUES
     ('INFLUENCER_TRIAL',   'INFLUENCER',  50,              5,              1,              0.00,      14),
     ('INFLUENCER_BASE',    'INFLUENCER',  100,             5,              1,              12.00,     NULL),
     ('INFLUENCER_PRO',     'INFLUENCER',  500,             15,             1,              29.00,     NULL),
-    ('AGENCY_TRIAL',   'AGENCY',  300,             10,             3,              0.00,      14),
-    ('AGENCY_BASE',    'AGENCY',  300,             10,             3,              79.00,     NULL),
-    ('AGENCY_PRO',     'AGENCY',  1000,            30,             10,             199.00,    NULL),
-    ('AGENCY_CUSTOM',  'AGENCY',  -1,              -1,             -1,             0.00,      NULL);
+    ('AGENCY_TRIAL',       'AGENCY',      300,             10,             3,              0.00,      14),
+    ('AGENCY_BASE',        'AGENCY',      300,             10,             3,              79.00,     NULL),
+    ('AGENCY_PRO',         'AGENCY',      1000,            30,             10,             199.00,    NULL),
+    ('AGENCY_CUSTOM',      'AGENCY',      -1,              -1,             -1,             0.00,      NULL);
 
 -- ─────────────────────────────────────────────
--- user_plan  (per-workspace plan assignment with optional custom limit overrides)
+-- company_plan  (per-company plan assignment with optional custom limit overrides)
 -- ─────────────────────────────────────────────
-CREATE TABLE socialraven.user_plan (
+CREATE TABLE socialraven.company_plan (
     id                     BIGSERIAL    PRIMARY KEY,
-    workspace_id           VARCHAR(255) NOT NULL REFERENCES socialraven.workspace(id),
-    user_id                VARCHAR(255) NOT NULL UNIQUE,
+    company_id             VARCHAR(255) NOT NULL UNIQUE REFERENCES socialraven.company(id),
     plan_type              VARCHAR(50)  NOT NULL DEFAULT 'INFLUENCER_TRIAL',
     status                 VARCHAR(50)  NOT NULL DEFAULT 'TRIALING',
     renewal_date           TIMESTAMPTZ  NOT NULL,
@@ -40,9 +39,8 @@ CREATE TABLE socialraven.user_plan (
     custom_accounts_limit  INTEGER,     -- NULL = use plan_config default
     created_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_user_plan_type   FOREIGN KEY (plan_type) REFERENCES socialraven.plan_config(plan_type),
-    CONSTRAINT fk_plan_workspace   FOREIGN KEY (workspace_id) REFERENCES socialraven.workspace(id),
-    CONSTRAINT user_plan_status_ck CHECK (status IN ('TRIALING','ACTIVE','PAST_DUE','CANCELLED'))
+    CONSTRAINT fk_company_plan_type   FOREIGN KEY (plan_type) REFERENCES socialraven.plan_config(plan_type),
+    CONSTRAINT company_plan_status_ck CHECK (status IN ('TRIALING','ACTIVE','PAST_DUE','CANCELLED'))
 );
 
-CREATE INDEX idx_plan_workspace ON socialraven.user_plan(workspace_id);
+CREATE INDEX idx_plan_company ON socialraven.company_plan(company_id);

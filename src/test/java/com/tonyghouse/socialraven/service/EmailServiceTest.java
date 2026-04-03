@@ -73,7 +73,7 @@ class EmailServiceTest {
                 "teammate@example.com",
                 "Revenue Ops",
                 "Jamie Lee",
-                WorkspaceRole.MEMBER,
+                WorkspaceRole.EDITOR,
                 WorkspaceRole.ADMIN
         );
 

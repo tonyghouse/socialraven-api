@@ -7,7 +7,6 @@ import com.tonyghouse.socialraven.repo.AnalyticsJobRepo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
 import com.tonyghouse.socialraven.repo.PostAnalyticsSnapshotRepo;
 import com.tonyghouse.socialraven.repo.PostCollectionRepo;
-import com.tonyghouse.socialraven.repo.UserPlanRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceInvitationRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
@@ -41,7 +40,6 @@ public class WorkspaceDeletionScheduler {
     @Autowired private WorkspaceSettingsRepo workspaceSettingsRepo;
     @Autowired private PostCollectionRepo postCollectionRepo;
     @Autowired private OAuthInfoRepo oauthInfoRepo;
-    @Autowired private UserPlanRepo userPlanRepo;
     @Autowired private AnalyticsJobRepo analyticsJobRepo;
     @Autowired private PostAnalyticsSnapshotRepo postAnalyticsSnapshotRepo;
     @Autowired private AccountAnalyticsSnapshotRepo accountAnalyticsSnapshotRepo;
@@ -73,7 +71,7 @@ public class WorkspaceDeletionScheduler {
 
     /**
      * Deletes all data for a workspace in FK-safe order, then removes the workspace row.
-     * Order: analytics → posts/media (JPA cascade) → oauth → billing → invitations → settings → members → workspace
+     * Order: analytics → posts/media (JPA cascade) → oauth → invitations → settings → members → workspace
      */
     private void hardDelete(String workspaceId) {
         requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
@@ -90,19 +88,16 @@ public class WorkspaceDeletionScheduler {
         // 3. OAuth tokens
         oauthInfoRepo.deleteAllByWorkspaceId(workspaceId);
 
-        // 4. Billing plan
-        userPlanRepo.deleteAllByWorkspaceId(workspaceId);
-
-        // 5. Invitations
+        // 4. Invitations
         workspaceInvitationRepo.deleteAllByWorkspaceId(workspaceId);
 
-        // 6. Workspace settings
+        // 5. Workspace settings
         workspaceSettingsRepo.deleteById(workspaceId);
 
-        // 7. Members
+        // 6. Members
         workspaceMemberRepo.deleteAllByWorkspaceId(workspaceId);
 
-        // 8. Workspace row itself
+        // 7. Workspace row itself
         workspaceRepo.deleteById(workspaceId);
     }
 }

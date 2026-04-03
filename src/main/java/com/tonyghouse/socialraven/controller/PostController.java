@@ -42,7 +42,7 @@ public class PostController {
         return postService.getPostById(userId, postId);
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @DeleteMapping("/{postId}")
     public void deletePostById(@PathVariable Long postId) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());

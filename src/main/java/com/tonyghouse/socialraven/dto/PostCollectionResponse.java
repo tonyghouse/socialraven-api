@@ -17,8 +17,23 @@ public class PostCollectionResponse {
     private OffsetDateTime scheduledTime;
     private String postCollectionType;
     private String overallStatus;
+    private String reviewStatus;
+    private OffsetDateTime reviewSubmittedAt;
+    private OffsetDateTime approvedAt;
+    private boolean approvalLocked;
+    private OffsetDateTime approvalLockedAt;
+    private Integer requiredApprovalSteps;
+    private Integer completedApprovalSteps;
+    private String nextApprovalStage;
     private List<PostResponse> posts;
     private List<MediaResponse> media;
+    private List<PostCollectionReviewHistoryResponse> reviewHistory;
+    private Integer approvalReminderAttemptCount;
+    private OffsetDateTime lastApprovalReminderSentAt;
+    private OffsetDateTime nextApprovalReminderAt;
+    private OffsetDateTime approvalEscalatedAt;
+    private List<PostCollectionVersionResponse> versionHistory;
+    private PostCollectionApprovalDiffResponse approvedDiff;
     /** Platform-specific configuration, e.g. YouTube title, Instagram alt text. */
     private Map<String, Object> platformConfigs;
     private String failureState;

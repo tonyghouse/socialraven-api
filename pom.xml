@@ -50,6 +50,13 @@
 			<version>0.0.1</version>
 		</dependency>
 
+		<!-- TODO: TEMP - needed for TestMediaEmailRunner; remove with it -->
+		<dependency>
+			<groupId>com.resend</groupId>
+			<artifactId>resend-java</artifactId>
+			<version>3.1.0</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>

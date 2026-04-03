@@ -1,23 +1,24 @@
 package com.tonyghouse.socialraven.service.workspace;
 
+import com.tonyghouse.socialraven.constant.WorkspaceApprovalMode;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.workspace.CreateWorkspaceRequest;
 import com.tonyghouse.socialraven.dto.workspace.UpdateWorkspaceRequest;
 import com.tonyghouse.socialraven.dto.workspace.WorkspaceResponse;
+import com.tonyghouse.socialraven.entity.CompanyEntity;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
 import com.tonyghouse.socialraven.entity.PlanConfigEntity;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import com.tonyghouse.socialraven.entity.PostEntity;
-import com.tonyghouse.socialraven.entity.UserProfileEntity;
 import com.tonyghouse.socialraven.entity.UserPlanEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.helper.PostPoolHelper;
+import com.tonyghouse.socialraven.repo.CompanyRepo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
 import com.tonyghouse.socialraven.repo.PlanConfigRepo;
 import com.tonyghouse.socialraven.repo.PostCollectionRepo;
-import com.tonyghouse.socialraven.repo.UserProfileRepo;
 import com.tonyghouse.socialraven.repo.UserPlanRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
@@ -25,6 +26,7 @@ import com.tonyghouse.socialraven.scheduler.PostRedisService;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
 import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
+import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -58,9 +60,6 @@ public class WorkspaceService {
     private PlanConfigRepo planConfigRepo;
 
     @Autowired
-    private UserProfileRepo userProfileRepo;
-
-    @Autowired
     private PostCollectionRepo postCollectionRepo;
 
     @Autowired
@@ -78,58 +77,52 @@ public class WorkspaceService {
     @Autowired
     private RequestAccessCacheService requestAccessCacheService;
 
-    /**
-     * Returns all workspaces the caller belongs to, with their role in each.
-     */
+    @Autowired
+    private CompanyAccessService companyAccessService;
+
+    @Autowired
+    private CompanyRepo companyRepo;
+
+    @Autowired
+    private WorkspaceCapabilityService workspaceCapabilityService;
+
     public List<WorkspaceResponse> getMyWorkspaces(String userId) {
         List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
         return memberships.stream()
-                .map(m -> {
-                    // Only return active (not soft-deleted) workspaces
-                    WorkspaceEntity ws = workspaceRepo.findByIdAndDeletedAtIsNull(m.getWorkspaceId())
-                            .orElse(null);
-                    if (ws == null) return null;
-                    return toResponse(ws, m.getRole());
-                })
-                .filter(r -> r != null)
+                .map(membership -> workspaceRepo.findByIdAndDeletedAtIsNull(membership.getWorkspaceId())
+                        .map(workspace -> toResponse(workspace, userId, membership.getRole()))
+                        .orElse(null))
+                .filter(response -> response != null)
                 .collect(Collectors.toList());
     }
 
     public List<WorkspaceResponse> getDeletedWorkspaces(String userId) {
         return workspaceMemberRepo.findAllByUserId(userId).stream()
-                .filter(member -> member.getRole() == WorkspaceRole.OWNER || member.getRole() == WorkspaceRole.ADMIN)
+                .filter(member -> member.getRole().isAtLeast(WorkspaceRole.ADMIN))
                 .map(member -> workspaceRepo.findById(member.getWorkspaceId())
                         .filter(workspace -> workspace.getDeletedAt() != null)
-                        .map(workspace -> toResponse(workspace, member.getRole()))
+                        .map(workspace -> toResponse(workspace, userId, member.getRole()))
                         .orElse(null))
                 .filter(response -> response != null)
                 .sorted((a, b) -> b.getDeletedAt().compareTo(a.getDeletedAt()))
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Creates a new workspace for the caller.
-     * Plan-gated: checks max_workspaces against how many workspaces the user already owns.
-     */
     @Transactional
     public WorkspaceResponse createWorkspace(String userId, CreateWorkspaceRequest req) {
         if (req.getName() == null || req.getName().isBlank()) {
             throw new SocialRavenException("Workspace name is required", HttpStatus.BAD_REQUEST);
         }
 
-        UserProfileEntity profile = userProfileRepo.findById(userId)
-                .orElseThrow(() -> new SocialRavenException("Onboarding must be completed before creating a workspace", HttpStatus.FORBIDDEN));
-        if (!profile.isCanCreateWorkspaces()) {
-            throw new SocialRavenException("Only owners and admins can create workspaces", HttpStatus.FORBIDDEN);
-        }
+        String companyId = companyAccessService.resolveManageableCompanyId(userId, req.getCompanyId());
+        CompanyEntity company = companyAccessService.requireCompany(companyId);
 
-        // Plan-gate: count current active owned workspaces vs allowed limit
-        UserPlanEntity planEntity = userPlanRepo.findByUserId(userId).orElse(null);
+        UserPlanEntity planEntity = userPlanRepo.findByCompanyId(companyId).orElse(null);
         if (planEntity != null) {
             PlanConfigEntity config = planConfigRepo.findById(planEntity.getPlanType()).orElse(null);
             if (config != null && config.getMaxWorkspaces() > 0) {
-                long ownedCount = workspaceRepo.findAllByOwnerUserIdAndDeletedAtIsNull(userId).size();
-                if (ownedCount >= config.getMaxWorkspaces()) {
+                long workspaceCount = workspaceRepo.findAllByCompanyIdAndDeletedAtIsNull(companyId).size();
+                if (workspaceCount >= config.getMaxWorkspaces()) {
                     throw new SocialRavenException(
                             "Workspace limit reached for your plan (" + config.getMaxWorkspaces() + ")",
                             HttpStatus.FORBIDDEN);
@@ -142,41 +135,47 @@ public class WorkspaceService {
 
         WorkspaceEntity workspace = new WorkspaceEntity();
         workspace.setId(workspaceId);
+        workspace.setCompanyId(companyId);
         workspace.setName(req.getName().trim());
-        workspace.setCompanyName(req.getCompanyName());
         workspace.setLogoS3Key(req.getLogoS3Key());
-        workspace.setOwnerUserId(userId);
         workspace.setCreatedAt(now);
         workspace.setUpdatedAt(now);
         workspaceRepo.save(workspace);
 
-        WorkspaceMemberEntity member = new WorkspaceMemberEntity();
-        member.setWorkspaceId(workspaceId);
-        member.setUserId(userId);
-        member.setRole(WorkspaceRole.OWNER);
-        member.setJoinedAt(now);
-        workspaceMemberRepo.save(member);
-        requestAccessCacheService.cacheWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
+        WorkspaceMemberEntity ownerMembership = new WorkspaceMemberEntity();
+        ownerMembership.setWorkspaceId(workspaceId);
+        ownerMembership.setUserId(company.getOwnerUserId());
+        ownerMembership.setRole(WorkspaceRole.OWNER);
+        ownerMembership.setJoinedAt(now);
+        workspaceMemberRepo.save(ownerMembership);
+        requestAccessCacheService.cacheWorkspaceRole(workspaceId, company.getOwnerUserId(), WorkspaceRole.OWNER);
 
-        log.info("Workspace created: id={}, owner={}", workspaceId, userId);
-        return toResponse(workspace, WorkspaceRole.OWNER);
+        WorkspaceRole callerRole = WorkspaceRole.OWNER;
+        if (!company.getOwnerUserId().equals(userId)) {
+            WorkspaceMemberEntity creatorMembership = new WorkspaceMemberEntity();
+            creatorMembership.setWorkspaceId(workspaceId);
+            creatorMembership.setUserId(userId);
+            creatorMembership.setRole(WorkspaceRole.ADMIN);
+            creatorMembership.setJoinedAt(now);
+            workspaceMemberRepo.save(creatorMembership);
+            requestAccessCacheService.cacheWorkspaceRole(workspaceId, userId, WorkspaceRole.ADMIN);
+            companyAccessService.syncCompanyUserRole(companyId, userId);
+            callerRole = WorkspaceRole.ADMIN;
+        }
+
+        log.info("Workspace created: id={}, companyId={}, by={}", workspaceId, companyId, userId);
+        return toResponse(workspace, userId, callerRole);
     }
 
-    /**
-     * Returns workspace details. Caller must be a member (enforced by WorkspaceAccessFilter).
-     */
     public WorkspaceResponse getWorkspace(String workspaceId, String userId) {
         WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
                 .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
         WorkspaceRole role = workspaceMemberRepo.findByWorkspaceIdAndUserId(workspaceId, userId)
                 .map(WorkspaceMemberEntity::getRole)
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
-        return toResponse(workspace, role);
+        return toResponse(workspace, userId, role);
     }
 
-    /**
-     * Updates workspace details. Caller must be ADMIN or OWNER.
-     */
     @Transactional
     public WorkspaceResponse updateWorkspace(String workspaceId, String userId, UpdateWorkspaceRequest req) {
         WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
@@ -186,29 +185,36 @@ public class WorkspaceService {
                 .map(WorkspaceMemberEntity::getRole)
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
 
-        if (role != WorkspaceRole.OWNER && role != WorkspaceRole.ADMIN) {
+        if (!role.isAtLeast(WorkspaceRole.ADMIN)) {
             throw new SocialRavenException("ADMIN or OWNER role required", HttpStatus.FORBIDDEN);
         }
 
         if (req.getName() != null && !req.getName().isBlank()) {
             workspace.setName(req.getName().trim());
         }
-        if (req.getCompanyName() != null) {
-            workspace.setCompanyName(req.getCompanyName());
-        }
         if (req.getLogoS3Key() != null) {
             workspace.setLogoS3Key(req.getLogoS3Key());
+        }
+        if (req.getApprovalMode() != null) {
+            workspace.setApprovalMode(req.getApprovalMode());
         }
         workspace.setUpdatedAt(OffsetDateTime.now());
         workspaceRepo.save(workspace);
 
-        return toResponse(workspace, role);
+        if (req.getCompanyName() != null && !req.getCompanyName().isBlank()) {
+            CompanyEntity company = companyAccessService.requireCompany(workspace.getCompanyId());
+            company.setName(req.getCompanyName().trim());
+            company.setUpdatedAt(OffsetDateTime.now());
+            companyRepo.save(company);
+        }
+
+        if (req.getApproverUserIds() != null) {
+            workspaceCapabilityService.replaceExplicitApprovers(workspaceId, req.getApproverUserIds());
+        }
+
+        return toResponse(workspace, userId, role);
     }
 
-    /**
-     * Soft-deletes a workspace. Caller must be ADMIN or OWNER.
-     * Sets deleted_at = now(). WorkspaceDeletionScheduler hard-deletes after 30 days (GDPR §5.6).
-     */
     @Transactional
     public void deleteWorkspace(String workspaceId, String userId) {
         WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
@@ -218,7 +224,7 @@ public class WorkspaceService {
                 .map(WorkspaceMemberEntity::getRole)
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
 
-        if (role != WorkspaceRole.OWNER && role != WorkspaceRole.ADMIN) {
+        if (!role.isAtLeast(WorkspaceRole.ADMIN)) {
             throw new SocialRavenException("ADMIN or OWNER role required", HttpStatus.FORBIDDEN);
         }
 
@@ -232,7 +238,7 @@ public class WorkspaceService {
         workspaceRepo.save(workspace);
         requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
         disableWorkspaceQueues(workspaceId);
-        notifyWorkspaceMembers(workspaceId, workspace.getName(), userId, true);
+        notifyWorkspaceUsers(workspaceId, workspace.getName(), userId, true);
         log.info("Workspace soft-deleted (30-day retention): id={}, by userId={}", workspaceId, userId);
     }
 
@@ -245,7 +251,7 @@ public class WorkspaceService {
                 .map(WorkspaceMemberEntity::getRole)
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
 
-        if (role != WorkspaceRole.OWNER && role != WorkspaceRole.ADMIN) {
+        if (!role.isAtLeast(WorkspaceRole.ADMIN)) {
             throw new SocialRavenException("ADMIN or OWNER role required", HttpStatus.FORBIDDEN);
         }
 
@@ -258,9 +264,9 @@ public class WorkspaceService {
         workspaceRepo.save(workspace);
         requestAccessCacheService.evictWorkspaceRolesForWorkspace(workspaceId);
         restoreWorkspaceQueues(workspaceId);
-        notifyWorkspaceMembers(workspaceId, workspace.getName(), userId, false);
+        notifyWorkspaceUsers(workspaceId, workspace.getName(), userId, false);
         log.info("Workspace restored: id={}, by userId={}", workspaceId, userId);
-        return toResponse(workspace, role);
+        return toResponse(workspace, userId, role);
     }
 
     private void disableWorkspaceQueues(String workspaceId) {
@@ -308,10 +314,10 @@ public class WorkspaceService {
         postRedisService.addIds(OAUTH_EXPIRY_POOL_KEY, oauthIds);
     }
 
-    private void notifyWorkspaceMembers(String workspaceId,
-                                        String workspaceName,
-                                        String actorUserId,
-                                        boolean deleted) {
+    private void notifyWorkspaceUsers(String workspaceId,
+                                      String workspaceName,
+                                      String actorUserId,
+                                      boolean deleted) {
         String actorName = resolveDisplayName(actorUserId);
         Set<String> emails = new LinkedHashSet<>();
 
@@ -356,17 +362,26 @@ public class WorkspaceService {
         return userId;
     }
 
-    private WorkspaceResponse toResponse(WorkspaceEntity ws, WorkspaceRole role) {
+    private WorkspaceResponse toResponse(WorkspaceEntity workspace, String userId, WorkspaceRole role) {
+        CompanyEntity company = companyRepo.findById(workspace.getCompanyId()).orElse(null);
+        WorkspaceApprovalMode approvalMode = workspace.getApprovalMode() != null
+                ? workspace.getApprovalMode()
+                : WorkspaceApprovalMode.OPTIONAL;
         return new WorkspaceResponse(
-                ws.getId(),
-                ws.getName(),
-                ws.getCompanyName(),
-                ws.getOwnerUserId(),
-                ws.getLogoS3Key(),
+                workspace.getId(),
+                workspace.getCompanyId(),
+                workspace.getName(),
+                company != null ? company.getName() : null,
+                company != null ? company.getLogoS3Key() : null,
+                workspace.getLogoS3Key(),
                 role,
-                ws.getCreatedAt(),
-                ws.getUpdatedAt(),
-                ws.getDeletedAt()
+                approvalMode,
+                approvalMode == WorkspaceApprovalMode.MULTI_STEP,
+                workspaceCapabilityService.getExplicitApproverUserIds(workspace.getId()),
+                workspaceCapabilityService.getEffectiveCapabilitiesList(workspace.getId(), userId, role),
+                workspace.getCreatedAt(),
+                workspace.getUpdatedAt(),
+                workspace.getDeletedAt()
         );
     }
 }

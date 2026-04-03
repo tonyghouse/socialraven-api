@@ -53,7 +53,7 @@ public class OAuthController {
     private JedisPool jedisPool;
 
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/x/callback")
     public ResponseEntity<String> handleCallback(
             @RequestBody XOAuthCallbackRequest request
@@ -65,14 +65,14 @@ public class OAuthController {
 
 
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/linkedin/callback")
     public ResponseEntity<String> handleLinkedinCallback(@RequestBody Map<String, String> body) {
         linkedInOAuthService.exchangeCodeForToken(body.get("code"));
         return ResponseEntity.ok("LinkedIn connected");
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/youtube/callback")
     public ResponseEntity<?> youtubeCallback(@RequestBody Map<String, String> body) {
         try {
@@ -84,7 +84,7 @@ public class OAuthController {
         }
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/instagram/callback")
     public ResponseEntity<?> instagramCallback(
             @RequestBody Map<String, String> body
@@ -94,7 +94,7 @@ public class OAuthController {
         return ResponseEntity.ok("Instagram connected");
     }
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/facebook/callback")
     public ResponseEntity<?> facebookCallback(
             @RequestBody Map<String, String> body
@@ -106,7 +106,7 @@ public class OAuthController {
 
 
     // Add to OAuthController
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/x/store-pkce")
     public ResponseEntity<Map<String, String>> storePkce(@RequestBody Map<String, String> data) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());

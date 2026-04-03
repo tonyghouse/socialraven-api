@@ -18,7 +18,7 @@ public interface WorkspaceMemberRepo extends JpaRepository<WorkspaceMemberEntity
 
     @Query(value = """
             SELECT wm.role
-            FROM socialraven.workspace_member wm
+            FROM socialraven.workspace_user wm
             JOIN socialraven.workspace w ON w.id = wm.workspace_id
             WHERE wm.workspace_id = :workspaceId
               AND wm.user_id = :userId

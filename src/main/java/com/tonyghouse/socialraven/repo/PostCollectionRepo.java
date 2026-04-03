@@ -1,6 +1,7 @@
 package com.tonyghouse.socialraven.repo;
 
 import com.tonyghouse.socialraven.constant.RecoveryState;
+import com.tonyghouse.socialraven.constant.PostReviewStatus;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,8 +29,15 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
 
     Optional<PostCollectionEntity> findByIdAndWorkspaceId(Long id, String workspaceId);
 
+    Page<PostCollectionEntity> findByWorkspaceIdAndReviewStatus(String workspaceId, PostReviewStatus reviewStatus, Pageable pageable);
+
     /** Used by WorkspaceDeletionScheduler to cascade-delete posts and media via JPA. */
     List<PostCollectionEntity> findAllByWorkspaceId(String workspaceId);
+
+    List<PostCollectionEntity> findAllByDraftTrueAndReviewStatusAndNextApprovalReminderAtIsNotNullAndNextApprovalReminderAtLessThanEqual(
+            PostReviewStatus reviewStatus,
+            OffsetDateTime now
+    );
 
     @Query("""
             SELECT DISTINCT pc
@@ -97,6 +105,62 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
             @Param("workspaceId") String workspaceId,
             @Param("search") String search,
             @Param("platform") String platform,
+            Pageable pageable);
+
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search)",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search)")
+    Page<PostCollectionEntity> findReviewCollections(
+            @Param("workspaceId") String workspaceId,
+            @Param("search") String search,
+            Pageable pageable);
+
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p FROM PostEntity p WHERE p.postCollection = c AND cast(p.provider as String) = :platform)")
+    Page<PostCollectionEntity> findReviewCollectionsByPlatform(
+            @Param("workspaceId") String workspaceId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            Pageable pageable);
+
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND p.providerUserId IN :providerUserIds",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND p.providerUserId IN :providerUserIds")
+    Page<PostCollectionEntity> findReviewCollectionsWithAccounts(
+            @Param("workspaceId") String workspaceId,
+            @Param("search") String search,
+            @Param("providerUserIds") List<String> providerUserIds,
+            Pageable pageable);
+
+    @Query(value = "SELECT DISTINCT c FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c AND cast(p2.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds",
+           countQuery = "SELECT COUNT(DISTINCT c) FROM PostCollectionEntity c JOIN c.posts p WHERE c.workspaceId = :workspaceId " +
+           "AND c.reviewStatus = com.tonyghouse.socialraven.constant.PostReviewStatus.IN_REVIEW " +
+           "AND (:search IS NULL OR LOWER(c.description) LIKE :search) " +
+           "AND EXISTS (SELECT p2 FROM PostEntity p2 WHERE p2.postCollection = c AND cast(p2.provider as String) = :platform) " +
+           "AND p.providerUserId IN :providerUserIds")
+    Page<PostCollectionEntity> findReviewCollectionsWithAccountsAndPlatform(
+            @Param("workspaceId") String workspaceId,
+            @Param("search") String search,
+            @Param("platform") String platform,
+            @Param("providerUserIds") List<String> providerUserIds,
             Pageable pageable);
 
     // ──────────────────────────────────────────────────────────────────────────────

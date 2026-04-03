@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  * that require an X-Workspace-Id header, excluding /workspaces/** and /public/**).
  *
  * Example:
- *   @RequiresRole(WorkspaceRole.MEMBER)  // MEMBER, ADMIN, or OWNER can proceed
+ *   @RequiresRole(WorkspaceRole.EDITOR)  // EDITOR, ADMIN, or OWNER can proceed
  *   @PostMapping("/schedule")
  *   public PostCollection schedulePost(...) { ... }
  */

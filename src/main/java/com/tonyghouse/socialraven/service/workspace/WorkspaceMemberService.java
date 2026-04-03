@@ -2,7 +2,6 @@ package com.tonyghouse.socialraven.service.workspace;
 
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.workspace.MemberResponse;
-import com.tonyghouse.socialraven.entity.UserProfileEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
@@ -12,13 +11,13 @@ import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
 import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
+import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,6 +42,12 @@ public class WorkspaceMemberService {
 
     @Autowired
     private RequestAccessCacheService requestAccessCacheService;
+
+    @Autowired
+    private CompanyAccessService companyAccessService;
+
+    @Autowired
+    private WorkspaceCapabilityService workspaceCapabilityService;
 
     /**
      * Returns all members of the workspace, enriched with Clerk profile data.
@@ -105,27 +110,14 @@ public class WorkspaceMemberService {
 
         target.setRole(newRole);
         memberRepo.save(target);
+        workspaceCapabilityService.clearOverridesForMember(workspaceId, targetUserId);
         requestAccessCacheService.cacheWorkspaceRole(workspaceId, targetUserId, newRole);
-        if (newRole == WorkspaceRole.ADMIN) {
-            userProfileRepo.findById(targetUserId).ifPresentOrElse(profile -> {
-                if (!profile.isCanCreateWorkspaces()) {
-                    profile.setCanCreateWorkspaces(true);
-                    profile.setUpdatedAt(OffsetDateTime.now());
-                    userProfileRepo.save(profile);
-                }
-                requestAccessCacheService.cacheUserStatus(targetUserId, profile.getStatus());
-            }, () -> {
-                UserProfileEntity profile = new UserProfileEntity();
-                profile.setUserId(targetUserId);
-                profile.setUserType(com.tonyghouse.socialraven.constant.UserType.INFLUENCER);
-                profile.setStatus(com.tonyghouse.socialraven.constant.UserStatus.ACTIVE);
-                profile.setCanCreateWorkspaces(true);
-                profile.setCreatedAt(OffsetDateTime.now());
-                profile.setUpdatedAt(OffsetDateTime.now());
-                userProfileRepo.save(profile);
-                requestAccessCacheService.cacheUserStatus(targetUserId, profile.getStatus());
-            });
-        }
+        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
+        companyAccessService.syncCompanyUserRole(workspace.getCompanyId(), targetUserId);
+
+        userProfileRepo.findById(targetUserId).ifPresent(profile ->
+                requestAccessCacheService.cacheUserStatus(targetUserId, profile.getStatus()));
         log.info("Member role updated: workspaceId={}, userId={}, newRole={}", workspaceId, targetUserId, newRole);
 
         ClerkUserService.UserProfile profile = clerkUserService.getUserProfile(target.getUserId());
@@ -151,7 +143,7 @@ public class WorkspaceMemberService {
 
     /**
      * Removes a member from the workspace.
-     * ADMIN+ can remove MEMBER/VIEWER. OWNER can remove anyone (except themselves).
+     * ADMIN+ can remove EDITOR/READ_ONLY. OWNER can remove anyone (except themselves).
      */
     @Transactional
     public void removeMember(String workspaceId, String targetUserId, String callerUserId) {
@@ -159,7 +151,7 @@ public class WorkspaceMemberService {
                 .map(WorkspaceMemberEntity::getRole)
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
 
-        if (callerRole == WorkspaceRole.MEMBER || callerRole == WorkspaceRole.VIEWER) {
+        if (!callerRole.isAtLeast(WorkspaceRole.ADMIN)) {
             throw new SocialRavenException("ADMIN or OWNER role required to remove members", HttpStatus.FORBIDDEN);
         }
 
@@ -175,9 +167,13 @@ public class WorkspaceMemberService {
             throw new SocialRavenException("Only the OWNER can remove another ADMIN", HttpStatus.FORBIDDEN);
         }
 
+        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
         ClerkUserService.UserProfile targetProfile = clerkUserService.getUserProfile(targetUserId);
         memberRepo.delete(target);
+        workspaceCapabilityService.clearOverridesForMember(workspaceId, targetUserId);
         requestAccessCacheService.evictWorkspaceRole(workspaceId, targetUserId);
+        companyAccessService.syncCompanyUserRole(workspace.getCompanyId(), targetUserId);
         log.info("Member removed: workspaceId={}, userId={}, by={}", workspaceId, targetUserId, callerUserId);
 
         if (targetProfile != null && targetProfile.email() != null && !targetProfile.email().isBlank()) {

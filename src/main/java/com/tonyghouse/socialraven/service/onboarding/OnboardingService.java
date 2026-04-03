@@ -5,6 +5,7 @@ import com.tonyghouse.socialraven.constant.UserType;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.onboarding.CompleteOnboardingRequest;
 import com.tonyghouse.socialraven.dto.onboarding.OnboardingStatusResponse;
+import com.tonyghouse.socialraven.entity.CompanyEntity;
 import com.tonyghouse.socialraven.entity.UserProfileEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
@@ -16,6 +17,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceSettingsRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
+import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,10 +55,9 @@ public class OnboardingService {
     @Autowired
     private RequestAccessCacheService requestAccessCacheService;
 
-    /**
-     * Returns onboarding status for the caller.
-     * Returns completed=false if no user_profile row exists yet.
-     */
+    @Autowired
+    private CompanyAccessService companyAccessService;
+
     public OnboardingStatusResponse getStatus(String userId) {
         Optional<UserProfileEntity> profile = userProfileRepo.findById(userId);
         List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
@@ -86,7 +87,6 @@ public class OnboardingService {
             log.info("Recovered missing user profile for invited teammate: userId={}", userId);
         }
 
-        // Return the first owned workspace when present; otherwise any active membership.
         String workspaceId = memberships.stream()
                 .filter(m -> m.getRole() == WorkspaceRole.OWNER)
                 .map(WorkspaceMemberEntity::getWorkspaceId)
@@ -104,10 +104,6 @@ public class OnboardingService {
         );
     }
 
-    /**
-     * Completes onboarding: persists user_profile, creates first workspace, adds OWNER membership.
-     * Idempotent — returns existing status if already completed.
-     */
     @Transactional
     public OnboardingStatusResponse completeOnboarding(String userId, CompleteOnboardingRequest request) {
         boolean isReactivation = false;
@@ -118,7 +114,6 @@ public class OnboardingService {
                 log.info("Onboarding already completed for user {}", userId);
                 return getStatus(userId);
             }
-            // INACTIVE user re-onboarding — allow them to create a new workspace
             isReactivation = true;
         }
 
@@ -140,7 +135,6 @@ public class OnboardingService {
 
         OffsetDateTime now = OffsetDateTime.now();
 
-        // 1. Persist or reactivate user profile
         if (!isReactivation) {
             UserProfileEntity profile = new UserProfileEntity();
             profile.setUserId(userId);
@@ -161,38 +155,45 @@ public class OnboardingService {
         }
         requestAccessCacheService.cacheUserStatus(userId, UserStatus.ACTIVE);
 
-        // 2. Determine workspace names to create
         List<String> namesToCreate;
-        String firstWorkspaceId;
+        String companyName;
+        String companyId;
 
         if (userType == UserType.INFLUENCER) {
-            // Influencer gets a single personal workspace.
-            // On initial onboarding use a stable "personal_<userId>" ID;
-            // on re-activation use a new UUID to avoid conflicts with the old workspace.
             namesToCreate = List.of("main");
-            firstWorkspaceId = isReactivation ? UUID.randomUUID().toString() : "personal_" + userId;
+            companyName = "Personal";
+            companyId = isReactivation ? UUID.randomUUID().toString() : "personal_" + userId;
         } else {
             namesToCreate = request.getWorkspaceNames().stream()
                     .map(String::trim)
                     .filter(n -> !n.isBlank())
                     .toList();
-            firstWorkspaceId = null; // will be set below
+            companyName = request.getCompanyName() != null && !request.getCompanyName().isBlank()
+                    ? request.getCompanyName().trim()
+                    : namesToCreate.get(0);
+            companyId = UUID.randomUUID().toString();
         }
+
+        CompanyEntity company = companyAccessService.createCompany(
+                userId,
+                companyName,
+                null,
+                now,
+                companyId
+        );
 
         String activeWorkspaceId = null;
 
         for (int i = 0; i < namesToCreate.size(); i++) {
             String workspaceId = (userType == UserType.INFLUENCER)
-                    ? firstWorkspaceId
+                    ? companyId
                     : UUID.randomUUID().toString();
             String workspaceName = namesToCreate.get(i);
 
             WorkspaceEntity workspace = new WorkspaceEntity();
             workspace.setId(workspaceId);
+            workspace.setCompanyId(company.getId());
             workspace.setName(workspaceName);
-            workspace.setCompanyName(i == 0 && request.getCompanyName() != null
-                    ? request.getCompanyName().trim() : null);
-            workspace.setOwnerUserId(userId);
             workspace.setCreatedAt(now);
             workspace.setUpdatedAt(now);
             workspaceRepo.save(workspace);
@@ -211,18 +212,16 @@ public class OnboardingService {
             settings.setUpdatedAt(now);
             workspaceSettingsRepo.save(settings);
 
-            if (i == 0) activeWorkspaceId = workspaceId;
+            if (i == 0) {
+                activeWorkspaceId = workspaceId;
+            }
         }
 
-        log.info("Onboarding completed for user {} as {} with {} workspace(s), active={}",
-                userId, userType, namesToCreate.size(), activeWorkspaceId);
+        log.info("Onboarding completed for user {} as {} with company {} and {} workspace(s), active={}",
+                userId, userType, company.getId(), namesToCreate.size(), activeWorkspaceId);
         return new OnboardingStatusResponse(true, userType.name(), activeWorkspaceId, true);
     }
 
-    /**
-     * Upgrades an INFLUENCER to AGENCY.
-     * Existing workspace is kept; agency features unlock immediately.
-     */
     @Transactional
     public OnboardingStatusResponse upgradeToAgency(String userId) {
         UserProfileEntity profile = userProfileRepo.findById(userId)

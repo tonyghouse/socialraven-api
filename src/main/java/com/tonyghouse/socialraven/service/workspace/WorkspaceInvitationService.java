@@ -17,6 +17,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.EmailService;
 import com.tonyghouse.socialraven.service.cache.RequestAccessCacheService;
+import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -57,6 +58,9 @@ public class WorkspaceInvitationService {
     @Autowired
     private RequestAccessCacheService requestAccessCacheService;
 
+    @Autowired
+    private CompanyAccessService companyAccessService;
+
     /**
      * Option A: invite by email to one or more workspaces at once.
      * Creates one workspace_invitation row per workspace, sends one email.
@@ -96,7 +100,7 @@ public class WorkspaceInvitationService {
                     .map(m -> m.getRole())
                     .orElseThrow(() -> new SocialRavenException("You are not a member of workspace: " + workspaceId, HttpStatus.FORBIDDEN));
 
-            if (callerRole == WorkspaceRole.MEMBER || callerRole == WorkspaceRole.VIEWER) {
+            if (!callerRole.isAtLeast(WorkspaceRole.ADMIN)) {
                 throw new SocialRavenException("ADMIN or OWNER role required to invite members", HttpStatus.FORBIDDEN);
             }
 
@@ -172,7 +176,7 @@ public class WorkspaceInvitationService {
                 .map(m -> m.getRole())
                 .orElseThrow(() -> new SocialRavenException("Access denied", HttpStatus.FORBIDDEN));
 
-        if (callerRole == WorkspaceRole.MEMBER || callerRole == WorkspaceRole.VIEWER) {
+        if (!callerRole.isAtLeast(WorkspaceRole.ADMIN)) {
             throw new SocialRavenException("ADMIN or OWNER role required to revoke invitations", HttpStatus.FORBIDDEN);
         }
 
@@ -195,7 +199,7 @@ public class WorkspaceInvitationService {
     /**
      * Accept an invitation by token.
      * Validates: not expired, not already used, caller's email matches invited_email.
-     * Then inserts a workspace_member row.
+     * Then inserts a workspace_user row.
      *
      * @return the workspaceId that was joined (for redirect)
      */
@@ -224,6 +228,8 @@ public class WorkspaceInvitationService {
         }
 
         String workspaceId = invitation.getWorkspaceId();
+        WorkspaceEntity workspace = workspaceRepo.findById(workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
 
         // Check if already a member — idempotent
         Optional<WorkspaceMemberEntity> existingMembership =
@@ -268,6 +274,7 @@ public class WorkspaceInvitationService {
             log.info("Created user profile via invitation acceptance: userId={}", callerUserId);
         });
         requestAccessCacheService.cacheUserStatus(callerUserId, UserStatus.ACTIVE);
+        companyAccessService.syncCompanyUserRole(workspace.getCompanyId(), callerUserId);
 
         return workspaceId;
     }

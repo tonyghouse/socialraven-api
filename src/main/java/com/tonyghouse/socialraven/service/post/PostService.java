@@ -1,45 +1,67 @@
 package com.tonyghouse.socialraven.service.post;
 
 import com.tonyghouse.socialraven.constant.PostCollectionType;
+import com.tonyghouse.socialraven.constant.PostActorType;
+import com.tonyghouse.socialraven.constant.PostApprovalStage;
+import com.tonyghouse.socialraven.constant.PostCollectionVersionEvent;
+import com.tonyghouse.socialraven.constant.PostReviewAction;
+import com.tonyghouse.socialraven.constant.PostReviewStatus;
 import com.tonyghouse.socialraven.constant.PostStatus;
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.constant.RecoveryState;
+import com.tonyghouse.socialraven.constant.WorkspaceApprovalMode;
+import com.tonyghouse.socialraven.constant.WorkspaceCapability;
+import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tonyghouse.socialraven.dto.ConnectedAccount;
 import com.tonyghouse.socialraven.dto.MediaResponse;
 import com.tonyghouse.socialraven.dto.CalendarPostResponse;
 import com.tonyghouse.socialraven.dto.PostCollection;
+import com.tonyghouse.socialraven.dto.PostCollectionApprovalDiffResponse;
+import com.tonyghouse.socialraven.dto.PostCollectionReviewActionRequest;
+import com.tonyghouse.socialraven.dto.PostCollectionReviewHistoryResponse;
 import com.tonyghouse.socialraven.dto.PostCollectionResponse;
+import com.tonyghouse.socialraven.dto.PostCollectionVersionResponse;
 import com.tonyghouse.socialraven.dto.PostMedia;
 import com.tonyghouse.socialraven.dto.PostResponse;
 import com.tonyghouse.socialraven.dto.ScheduleDraftRequest;
 import com.tonyghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
+import com.tonyghouse.socialraven.entity.PostCollectionReviewHistoryEntity;
+import com.tonyghouse.socialraven.entity.PostCollectionVersionEntity;
 import com.tonyghouse.socialraven.entity.PostEntity;
 import com.tonyghouse.socialraven.entity.PostMediaEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.helper.PostPoolHelper;
 import com.tonyghouse.socialraven.mapper.PostTypeMapper;
 import com.tonyghouse.socialraven.mapper.ProviderPlatformMapper;
 import com.tonyghouse.socialraven.repo.PostCollectionRepo;
+import com.tonyghouse.socialraven.repo.PostCollectionReviewHistoryRepo;
 import com.tonyghouse.socialraven.repo.PostMediaRepo;
 import com.tonyghouse.socialraven.repo.PostRepo;
+import com.tonyghouse.socialraven.repo.WorkspaceRepo;
+import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.account_profile.AccountProfileService;
 import com.tonyghouse.socialraven.service.storage.StorageService;
+import com.tonyghouse.socialraven.service.workspace.WorkspaceCapabilityService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -67,6 +89,9 @@ public class PostService {
     private PostMediaRepo postMediaRepo;
 
     @Autowired
+    private PostCollectionReviewHistoryRepo postCollectionReviewHistoryRepo;
+
+    @Autowired
     private StorageService storageService;
 
     @Autowired
@@ -78,14 +103,33 @@ public class PostService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private ClerkUserService clerkUserService;
+
+    @Autowired
+    private WorkspaceRepo workspaceRepo;
+
+    @Autowired
+    private WorkspaceCapabilityService workspaceCapabilityService;
+
+    @Autowired
+    private PostCollectionVersionService postCollectionVersionService;
+
+    @Value("${socialraven.approval.reminder.initial-delay-hours:12}")
+    private long initialApprovalReminderDelayHours;
+
 
     @Transactional
-    public PostCollection schedulePostCollection(PostCollection postCollectionReq) {
+    public PostCollectionResponse schedulePostCollection(PostCollection postCollectionReq) {
         boolean isDraft = postCollectionReq.isDraft();
         List<ConnectedAccount> connectedAccounts = postCollectionReq.getConnectedAccounts();
+        WorkspaceRole callerRole = WorkspaceContext.getRole();
 
         if (!isDraft && CollectionUtils.isEmpty(connectedAccounts)) {
-            throw new RuntimeException("Select connected accounts for post collection");
+            throw new SocialRavenException("Select connected accounts for post collection", HttpStatus.BAD_REQUEST);
+        }
+        if (!isDraft && postCollectionReq.getScheduledTime() == null) {
+            throw new SocialRavenException("scheduledTime is required", HttpStatus.BAD_REQUEST);
         }
 
         PostCollectionEntity postCollection = new PostCollectionEntity();
@@ -93,7 +137,8 @@ public class PostService {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         String workspaceId = WorkspaceContext.getWorkspaceId();
 
-        postCollection.setDraft(isDraft);
+        postCollection.setDraft(true);
+        postCollection.setReviewStatus(PostReviewStatus.DRAFT);
         PostCollectionType postType = postCollectionReq.getPostType();
         postCollection.setPostCollectionType(postType);
         postCollection.setCreatedBy(userId);
@@ -125,13 +170,12 @@ public class PostService {
 
         List<PostEntity> postEntities = new ArrayList<>();
         if (!CollectionUtils.isEmpty(connectedAccounts)) {
-            PostStatus postStatus = isDraft ? PostStatus.DRAFT : PostStatus.SCHEDULED;
             for (ConnectedAccount connectedAccount : connectedAccounts) {
                 PostEntity post = new PostEntity();
                 post.setProvider(ProviderPlatformMapper.getProviderByPlatform(connectedAccount.getPlatform()));
                 post.setProviderUserId(connectedAccount.getProviderUserId());
                 post.setPostCollection(postCollection);
-                post.setPostStatus(postStatus);
+                post.setPostStatus(PostStatus.DRAFT);
                 post.setPostType(PostTypeMapper.getPostTypeByPostCollectionType(postType));
                 post.setScheduledTime(scheduledTime);
                 postEntities.add(post);
@@ -140,27 +184,48 @@ public class PostService {
         postCollection.setPosts(postEntities);
 
         PostCollectionEntity savedPost = postCollectionRepo.save(postCollection);
+        postCollectionVersionService.recordVersion(savedPost, PostCollectionVersionEvent.CREATED, userId);
 
         if (!isDraft) {
-            List<PostEntity> posts = savedPost.getPosts();
-            for (PostEntity post : posts) {
-                OffsetDateTime scheduleTime = post.getScheduledTime();
-                long epochUtcMillis = scheduleTime.toInstant().toEpochMilli();
-                try (Jedis jedis = jedisPool.getResource()) {
-                    jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
-                    log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduleTime);
-                }
+            SubmissionDecision submissionDecision = resolveSubmissionDecision(workspaceId, userId, callerRole);
+            if (submissionDecision.requiresReview()) {
+                transitionToInReview(savedPost, userId, null, submissionDecision.requiredApprovalSteps());
+                log.info(
+                        "Collection submitted for review: collectionId={}, workspaceId={}, mode={}, steps={}",
+                        savedPost.getId(),
+                        workspaceId,
+                        submissionDecision.approvalMode(),
+                        submissionDecision.requiredApprovalSteps()
+                );
+            } else {
+                transitionToScheduledWithoutReview(savedPost);
+                enqueueScheduledPosts(savedPost.getPosts());
+                log.info(
+                        "Collection scheduled without review: collectionId={}, workspaceId={}, mode={}",
+                        savedPost.getId(),
+                        workspaceId,
+                        submissionDecision.approvalMode()
+                );
             }
+            savedPost = postCollectionRepo.save(savedPost);
+            postCollectionVersionService.recordVersion(
+                    savedPost,
+                    submissionDecision.requiresReview()
+                            ? PostCollectionVersionEvent.SUBMITTED
+                            : PostCollectionVersionEvent.SCHEDULED_DIRECT,
+                    userId
+            );
         } else {
             log.info("Draft saved: collectionId={}, workspaceId={}", savedPost.getId(), workspaceId);
         }
 
-        return postCollectionReq;
+        return buildResponse(savedPost, workspaceId, false);
     }
 
     @Transactional
     public PostCollectionResponse scheduleDraftCollection(String userId, Long collectionId, ScheduleDraftRequest req) {
         String workspaceId = WorkspaceContext.getWorkspaceId();
+        WorkspaceRole callerRole = WorkspaceContext.getRole();
         PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
                 .orElseThrow(() -> new SocialRavenException(
                         "Post collection not found", HttpStatus.NOT_FOUND));
@@ -177,27 +242,29 @@ public class PostService {
 
         OffsetDateTime scheduledTime = req.getScheduledTime();
         collection.setScheduledTime(scheduledTime);
-        collection.setDraft(false);
 
-        for (PostEntity post : collection.getPosts()) {
-            post.setScheduledTime(scheduledTime);
-            post.setPostStatus(PostStatus.SCHEDULED);
+        SubmissionDecision submissionDecision = resolveSubmissionDecision(workspaceId, userId, callerRole);
+        PostReviewStatus previousStatus = collection.getReviewStatus() != null
+                ? collection.getReviewStatus()
+                : PostReviewStatus.DRAFT;
+        if (submissionDecision.requiresReview()) {
+            transitionToInReview(collection, userId, null, submissionDecision.requiredApprovalSteps());
+        } else {
+            transitionToScheduledWithoutReview(collection);
+            enqueueScheduledPosts(collection.getPosts());
         }
 
         PostCollectionEntity saved = postCollectionRepo.save(collection);
-
-        long epochUtcMillis = scheduledTime.toInstant().toEpochMilli();
-        try (Jedis jedis = jedisPool.getResource()) {
-            for (PostEntity post : saved.getPosts()) {
-                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
-                log.info("Draft promoted to scheduled: postId={}, scheduleUTC={}", post.getId(), scheduledTime);
-            }
-        }
-
-        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
-        Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-        return getPostCollectionResponse(saved, connectedAccountMap);
+        postCollectionVersionService.recordVersion(
+                saved,
+                submissionDecision.requiresReview()
+                        ? previousStatus == PostReviewStatus.CHANGES_REQUESTED
+                                ? PostCollectionVersionEvent.RESUBMITTED
+                                : PostCollectionVersionEvent.SUBMITTED
+                        : PostCollectionVersionEvent.SCHEDULED_DIRECT,
+                userId
+        );
+        return buildResponse(saved, workspaceId, true);
     }
 
     @Transactional
@@ -251,15 +318,16 @@ public class PostService {
         PostCollectionEntity existingRecovery = loadExistingRecoveryCollection(failedCollection, workspaceId);
         if (existingRecovery != null) {
             markFailedCollectionHandled(failedCollection, userId, existingRecovery.getId());
-            return buildResponse(existingRecovery, workspaceId);
+            return buildResponse(existingRecovery, workspaceId, true);
         }
 
         PostCollectionEntity recoveryDraft = cloneAsRecoveryDraft(failedCollection, userId, workspaceId);
         PostCollectionEntity savedRecoveryDraft = postCollectionRepo.save(recoveryDraft);
+        postCollectionVersionService.recordVersion(savedRecoveryDraft, PostCollectionVersionEvent.RECOVERY_CREATED, userId);
 
         markFailedCollectionHandled(failedCollection, userId, savedRecoveryDraft.getId());
 
-        return buildResponse(savedRecoveryDraft, workspaceId);
+        return buildResponse(savedRecoveryDraft, workspaceId, true);
     }
 
     @Transactional
@@ -271,6 +339,15 @@ public class PostService {
         if (!workspaceId.equals(collection.getWorkspaceId())) {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
+        if (collection.isDraft() && collection.getReviewStatus() == PostReviewStatus.IN_REVIEW) {
+            throw new SocialRavenException(
+                    "This collection is currently in review. Request changes before editing it.",
+                    HttpStatus.CONFLICT
+            );
+        }
+        MaterialState beforeState = captureMaterialState(collection);
+        List<String> removedPostRedisKeys = new ArrayList<>();
+        List<String> newlyAddedProviderUserIds = new ArrayList<>();
 
         if (req.getDescription() != null) {
             collection.setDescription(req.getDescription());
@@ -295,6 +372,9 @@ public class PostService {
             List<String> keepKeys = req.getKeepMediaKeys() != null ? req.getKeepMediaKeys() : List.of();
             List<PostMediaEntity> updatedMedia = new ArrayList<>();
 
+            if (collection.getMediaFiles() == null) {
+                collection.setMediaFiles(new ArrayList<>());
+            }
             if (collection.getMediaFiles() != null) {
                 updatedMedia.addAll(
                         collection.getMediaFiles().stream()
@@ -319,9 +399,11 @@ public class PostService {
             collection.getMediaFiles().addAll(updatedMedia);
         }
 
-        List<String> newlyAddedProviderUserIds = new ArrayList<>();
         if (req.getConnectedAccounts() != null) {
             List<ConnectedAccount> requestedAccounts = req.getConnectedAccounts();
+            if (collection.getPosts() == null) {
+                collection.setPosts(new ArrayList<>());
+            }
 
             Set<String> requestedIds = requestedAccounts.stream()
                     .map(ConnectedAccount::getProviderUserId)
@@ -330,7 +412,6 @@ public class PostService {
                     ? collection.getPosts().stream().map(PostEntity::getProviderUserId).collect(Collectors.toSet())
                     : Set.of();
 
-            List<String> removedPostRedisKeys = new ArrayList<>();
             Iterator<PostEntity> iter = collection.getPosts().iterator();
             while (iter.hasNext()) {
                 PostEntity post = iter.next();
@@ -340,12 +421,6 @@ public class PostService {
                     }
                     iter.remove();
                 }
-            }
-            if (!removedPostRedisKeys.isEmpty()) {
-                try (Jedis jedis = jedisPool.getResource()) {
-                    jedis.zrem(PostPoolHelper.getPostsPoolName(), removedPostRedisKeys.toArray(String[]::new));
-                }
-                log.info("Removed {} posts from Redis pool on account update", removedPostRedisKeys.size());
             }
 
             PostCollectionType postType = collection.getPostCollectionType();
@@ -368,36 +443,219 @@ public class PostService {
         }
 
         if (req.getScheduledTime() != null && collection.getPosts() != null) {
-            long newEpochMillis = scheduledTime.toInstant().toEpochMilli();
-            try (Jedis jedis = jedisPool.getResource()) {
-                for (PostEntity post : collection.getPosts()) {
-                    if (post.getPostStatus() == PostStatus.SCHEDULED && post.getId() != null) {
-                        post.setScheduledTime(scheduledTime);
-                        jedis.zadd(PostPoolHelper.getPostsPoolName(), newEpochMillis, post.getId().toString());
-                    }
-                }
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(scheduledTime);
             }
+        }
+
+        MaterialState afterState = captureMaterialState(collection);
+        List<String> changedFields = describeMaterialChanges(beforeState, afterState);
+        boolean materialChangesDetected = !changedFields.isEmpty();
+        boolean requiresReapproval = !collection.isDraft()
+                && collection.getReviewStatus() == PostReviewStatus.APPROVED
+                && collection.isApprovalLocked()
+                && materialChangesDetected;
+
+        if (requiresReapproval && !Boolean.TRUE.equals(req.getAcknowledgeApprovalLock())) {
+            throw new SocialRavenException(
+                    "This collection is approval-locked. Confirm the edit to move it back into review.",
+                    HttpStatus.CONFLICT
+            );
+        }
+
+        if (requiresReapproval) {
+            List<String> scheduledRedisKeys = new ArrayList<>(removedPostRedisKeys);
+            scheduledRedisKeys.addAll(collectScheduledRedisKeys(collection.getPosts()));
+            removePostIdsFromRedis(scheduledRedisKeys);
+
+            transitionToReapprovalRequired(
+                    collection,
+                    userId,
+                    summarizeMaterialChanges(changedFields),
+                    resolveReapprovalStepCount(workspaceId)
+            );
+
+            PostCollectionEntity saved = postCollectionRepo.save(collection);
+            postCollectionVersionService.recordVersion(saved, PostCollectionVersionEvent.REAPPROVAL_REQUIRED, userId);
+            return buildResponse(saved, workspaceId, true);
         }
 
         PostCollectionEntity saved = postCollectionRepo.save(collection);
 
-        if (!newlyAddedProviderUserIds.isEmpty()) {
-            final long epochMillis = scheduledTime.toInstant().toEpochMilli();
-            try (Jedis jedis = jedisPool.getResource()) {
-                for (PostEntity post : saved.getPosts()) {
-                    if (newlyAddedProviderUserIds.contains(post.getProviderUserId())
-                            && post.getPostStatus() == PostStatus.SCHEDULED) {
-                        jedis.zadd(PostPoolHelper.getPostsPoolName(), epochMillis, post.getId().toString());
-                        log.info("New post added to Redis pool: postId={}, scheduleUTC={}", post.getId(), scheduledTime);
-                    }
-                }
-            }
+        removePostIdsFromRedis(removedPostRedisKeys);
+
+        if (!saved.isDraft() && (req.getScheduledTime() != null || !newlyAddedProviderUserIds.isEmpty())) {
+            enqueueScheduledPosts(saved.getPosts());
         }
 
-        List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
-        Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-        return getPostCollectionResponse(saved, connectedAccountMap);
+        if (materialChangesDetected) {
+            postCollectionVersionService.recordVersion(saved, PostCollectionVersionEvent.UPDATED, userId);
+        }
+
+        return buildResponse(saved, workspaceId, true);
+    }
+
+    @Transactional
+    public PostCollectionResponse approvePostCollection(String userId,
+                                                        Long collectionId,
+                                                        PostCollectionReviewActionRequest request) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new SocialRavenException("Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
+        }
+        if (!collection.isDraft() || collection.getReviewStatus() != PostReviewStatus.IN_REVIEW) {
+            throw new SocialRavenException("Only in-review collections can be approved", HttpStatus.BAD_REQUEST);
+        }
+
+        WorkspaceRole callerRole = WorkspaceContext.getRole();
+        assertCanApprove(workspaceId, userId, callerRole, collection);
+
+        if (collection.getNextApprovalStage() == PostApprovalStage.APPROVER
+                && collection.getRequiredApprovalSteps() > 1) {
+            transitionToOwnerFinalReview(collection, userId, request != null ? request.getNote() : null);
+        } else {
+            transitionToApprovedAndScheduled(collection, userId, request != null ? request.getNote() : null);
+            enqueueScheduledPosts(collection.getPosts());
+        }
+
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+        PostCollectionVersionEvent versionEvent;
+        if (saved.getReviewStatus() == PostReviewStatus.APPROVED) {
+            PostCollectionVersionEntity approvedVersion = postCollectionVersionService.recordVersion(
+                    saved,
+                    PostCollectionVersionEvent.APPROVED,
+                    userId
+            );
+            saved.setLastApprovedVersionId(approvedVersion != null ? approvedVersion.getId() : null);
+            saved = postCollectionRepo.save(saved);
+            versionEvent = PostCollectionVersionEvent.APPROVED;
+        } else {
+            postCollectionVersionService.recordVersion(saved, PostCollectionVersionEvent.STEP_APPROVED, userId);
+            versionEvent = PostCollectionVersionEvent.STEP_APPROVED;
+        }
+        log.info("Recorded post-collection version event {} for collectionId={}", versionEvent, saved.getId());
+        return buildResponse(saved, workspaceId, true);
+    }
+
+    @Transactional
+    public PostCollectionResponse requestChanges(String userId,
+                                                 Long collectionId,
+                                                 PostCollectionReviewActionRequest request) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        PostCollectionEntity collection = postCollectionRepo.findById(collectionId)
+                .orElseThrow(() -> new SocialRavenException("Post collection not found", HttpStatus.NOT_FOUND));
+        if (!workspaceId.equals(collection.getWorkspaceId())) {
+            throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
+        }
+        if (!collection.isDraft() || collection.getReviewStatus() != PostReviewStatus.IN_REVIEW) {
+            throw new SocialRavenException("Only in-review collections can request changes", HttpStatus.BAD_REQUEST);
+        }
+
+        WorkspaceRole callerRole = WorkspaceContext.getRole();
+        assertCanRequestChanges(workspaceId, userId, callerRole);
+        transitionToChangesRequested(collection, userId, request != null ? request.getNote() : null);
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+        postCollectionVersionService.recordVersion(saved, PostCollectionVersionEvent.CHANGES_REQUESTED, userId);
+        return buildResponse(saved, workspaceId, true);
+    }
+
+    @Transactional
+    PostCollectionEntity approvePostCollectionFromClientReviewer(PostCollectionEntity collection,
+                                                                 String reviewerDisplayName,
+                                                                 String reviewerEmail,
+                                                                 String note) {
+        if (collection == null) {
+            throw new SocialRavenException("Post collection not found", HttpStatus.NOT_FOUND);
+        }
+        if (!collection.isDraft() || collection.getReviewStatus() != PostReviewStatus.IN_REVIEW) {
+            throw new SocialRavenException("Only in-review collections can be approved", HttpStatus.BAD_REQUEST);
+        }
+        if (collection.getNextApprovalStage() == PostApprovalStage.OWNER_FINAL) {
+            throw new SocialRavenException(
+                    "This collection is already awaiting final internal sign-off",
+                    HttpStatus.CONFLICT
+            );
+        }
+
+        if (collection.getNextApprovalStage() == PostApprovalStage.APPROVER
+                && collection.getRequiredApprovalSteps() > 1) {
+            transitionToOwnerFinalReview(
+                    collection,
+                    null,
+                    reviewerDisplayName,
+                    reviewerEmail,
+                    PostActorType.CLIENT_REVIEWER,
+                    note
+            );
+        } else {
+            transitionToApprovedAndScheduled(
+                    collection,
+                    null,
+                    reviewerDisplayName,
+                    reviewerEmail,
+                    PostActorType.CLIENT_REVIEWER,
+                    note
+            );
+            enqueueScheduledPosts(collection.getPosts());
+        }
+
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+        if (saved.getReviewStatus() == PostReviewStatus.APPROVED) {
+            PostCollectionVersionEntity approvedVersion = postCollectionVersionService.recordVersion(
+                    saved,
+                    PostCollectionVersionEvent.APPROVED,
+                    null,
+                    reviewerDisplayName,
+                    reviewerEmail,
+                    PostActorType.CLIENT_REVIEWER
+            );
+            saved.setLastApprovedVersionId(approvedVersion != null ? approvedVersion.getId() : null);
+            saved = postCollectionRepo.save(saved);
+        } else {
+            postCollectionVersionService.recordVersion(
+                    saved,
+                    PostCollectionVersionEvent.STEP_APPROVED,
+                    null,
+                    reviewerDisplayName,
+                    reviewerEmail,
+                    PostActorType.CLIENT_REVIEWER
+            );
+        }
+        return saved;
+    }
+
+    @Transactional
+    PostCollectionEntity requestChangesFromClientReviewer(PostCollectionEntity collection,
+                                                          String reviewerDisplayName,
+                                                          String reviewerEmail,
+                                                          String note) {
+        if (collection == null) {
+            throw new SocialRavenException("Post collection not found", HttpStatus.NOT_FOUND);
+        }
+        if (!collection.isDraft() || collection.getReviewStatus() != PostReviewStatus.IN_REVIEW) {
+            throw new SocialRavenException("Only in-review collections can request changes", HttpStatus.BAD_REQUEST);
+        }
+
+        transitionToChangesRequested(
+                collection,
+                null,
+                reviewerDisplayName,
+                reviewerEmail,
+                PostActorType.CLIENT_REVIEWER,
+                note
+        );
+        PostCollectionEntity saved = postCollectionRepo.save(collection);
+        postCollectionVersionService.recordVersion(
+                saved,
+                PostCollectionVersionEvent.CHANGES_REQUESTED,
+                null,
+                reviewerDisplayName,
+                reviewerEmail,
+                PostActorType.CLIENT_REVIEWER
+        );
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -409,10 +667,7 @@ public class PostService {
         if (!workspaceId.equals(collection.getWorkspaceId())) {
             throw new SocialRavenException("Access denied", HttpStatus.FORBIDDEN);
         }
-        List<ConnectedAccount> connectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId, false);
-        Map<String, ConnectedAccount> connectedAccountMap = connectedAccounts.stream()
-                .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-        return getPostCollectionResponse(collection, connectedAccountMap);
+        return buildResponse(collection, workspaceId, true);
     }
 
     @Transactional(readOnly = true)
@@ -467,7 +722,35 @@ public class PostService {
         }
 
         Page<PostCollectionEntity> collectionsPage;
-        if ("scheduled".equalsIgnoreCase(type)) {
+        if ("review".equalsIgnoreCase(type)) {
+            WorkspaceRole callerRole = WorkspaceContext.getRole();
+            EnumSet<WorkspaceCapability> capabilities = workspaceCapabilityService.getEffectiveCapabilities(
+                    workspaceId,
+                    userId,
+                    callerRole
+            );
+            if (!capabilities.contains(WorkspaceCapability.APPROVE_POSTS)
+                    && !capabilities.contains(WorkspaceCapability.REQUEST_CHANGES)) {
+                throw new SocialRavenException("Approval workflow access is required", HttpStatus.FORBIDDEN);
+            }
+            Sort reviewSort = "asc".equalsIgnoreCase(sortDir)
+                    ? Sort.by("reviewSubmittedAt").ascending()
+                    : Sort.by("reviewSubmittedAt").descending();
+            Pageable reviewPageable = PageRequest.of(page, 12, reviewSort);
+            if (hasAccountFilter && hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findReviewCollectionsWithAccountsAndPlatform(
+                        workspaceId, searchPattern, platformStr, providerUserIds, reviewPageable);
+            } else if (hasAccountFilter) {
+                collectionsPage = postCollectionRepo.findReviewCollectionsWithAccounts(
+                        workspaceId, searchPattern, providerUserIds, reviewPageable);
+            } else if (hasPlatformFilter) {
+                collectionsPage = postCollectionRepo.findReviewCollectionsByPlatform(
+                        workspaceId, searchPattern, platformStr, reviewPageable);
+            } else {
+                collectionsPage = postCollectionRepo.findReviewCollections(
+                        workspaceId, searchPattern, reviewPageable);
+            }
+        } else if ("scheduled".equalsIgnoreCase(type)) {
             if (hasAccountFilter && hasPlatformFilter) {
                 collectionsPage = postCollectionRepo.findScheduledCollectionsWithAccountsAndPlatform(
                         workspaceId, searchPattern, platformStr, providerUserIds, fromDate, toDate, pageable);
@@ -510,13 +793,14 @@ public class PostService {
         } else {
             collectionsPage = postCollectionRepo.findByWorkspaceIdOrderByScheduledTimeDesc(workspaceId, pageable);
         }
-        return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap));
+        return collectionsPage.map(c -> getPostCollectionResponse(c, connectedAccountMap, false));
     }
 
     @SuppressWarnings("unchecked")
     private PostCollectionResponse getPostCollectionResponse(
             PostCollectionEntity collection,
-            Map<String, ConnectedAccount> connectedAccountMap) {
+            Map<String, ConnectedAccount> connectedAccountMap,
+            boolean includeReviewHistory) {
 
         List<PostEntity> posts = collection.getPosts();
         int publishedChannelCount = posts != null
@@ -542,6 +826,18 @@ public class PostService {
                 ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap)).toList()
                 : List.of();
 
+        List<PostCollectionReviewHistoryResponse> reviewHistory = includeReviewHistory
+                ? postCollectionReviewHistoryRepo.findAllByPostCollectionIdOrderByCreatedAtAsc(collection.getId()).stream()
+                .map(this::toReviewHistoryResponse)
+                .toList()
+                : null;
+        List<PostCollectionVersionResponse> versionHistory = includeReviewHistory
+                ? postCollectionVersionService.buildVersionHistory(collection.getId())
+                : null;
+        PostCollectionApprovalDiffResponse approvedDiff = includeReviewHistory
+                ? postCollectionVersionService.buildApprovedDiff(collection)
+                : null;
+
         Map<String, Object> platformConfigsMap = null;
         if (collection.getPlatformConfigs() != null && !collection.getPlatformConfigs().isBlank()) {
             try {
@@ -551,8 +847,11 @@ public class PostService {
             }
         }
 
+        PostReviewStatus reviewStatus = collection.getReviewStatus() != null
+                ? collection.getReviewStatus()
+                : PostReviewStatus.DRAFT;
         String overallStatus = collection.isDraft()
-                ? "DRAFT"
+                ? reviewStatus.name()
                 : deriveOverallStatus(posts);
 
         return new PostCollectionResponse(
@@ -561,8 +860,23 @@ public class PostService {
                 collection.getScheduledTime(),
                 collection.getPostCollectionType().name(),
                 overallStatus,
+                reviewStatus.name(),
+                collection.getReviewSubmittedAt(),
+                collection.getApprovedAt(),
+                collection.isApprovalLocked(),
+                collection.getApprovalLockedAt(),
+                collection.getRequiredApprovalSteps(),
+                collection.getCompletedApprovalSteps(),
+                collection.getNextApprovalStage() != null ? collection.getNextApprovalStage().name() : null,
                 postDtos,
                 mediaDtos,
+                reviewHistory,
+                collection.getApprovalReminderAttemptCount(),
+                collection.getLastApprovalReminderSentAt(),
+                collection.getNextApprovalReminderAt(),
+                collection.getApprovalEscalatedAt(),
+                versionHistory,
+                approvedDiff,
                 platformConfigsMap,
                 collection.getFailureState() != null ? collection.getFailureState().name() : RecoveryState.NONE.name(),
                 collection.getFailureReasonSummary(),
@@ -719,6 +1033,7 @@ public class PostService {
         recoveryDraft.setWorkspaceId(workspaceId);
         recoveryDraft.setDescription(failedCollection.getDescription());
         recoveryDraft.setDraft(true);
+        recoveryDraft.setReviewStatus(PostReviewStatus.DRAFT);
         recoveryDraft.setPostCollectionType(failedCollection.getPostCollectionType());
         recoveryDraft.setScheduledTime(null);
         recoveryDraft.setPlatformConfigs(failedCollection.getPlatformConfigs());
@@ -760,11 +1075,568 @@ public class PostService {
         return recoveryDraft;
     }
 
-    private PostCollectionResponse buildResponse(PostCollectionEntity collection, String workspaceId) {
+    private PostCollectionResponse buildResponse(PostCollectionEntity collection, String workspaceId, boolean includeReviewHistory) {
         List<ConnectedAccount> allConnectedAccounts = accountProfileService.getAllConnectedAccounts(workspaceId);
         Map<String, ConnectedAccount> connectedAccountMap = allConnectedAccounts.stream()
                 .collect(Collectors.toMap(ConnectedAccount::getProviderUserId, account -> account));
-        return getPostCollectionResponse(collection, connectedAccountMap);
+        return getPostCollectionResponse(collection, connectedAccountMap, includeReviewHistory);
+    }
+
+    private PostCollectionReviewHistoryResponse toReviewHistoryResponse(PostCollectionReviewHistoryEntity historyEntity) {
+        String actorDisplayName;
+        if (historyEntity.getActorType() == PostActorType.CLIENT_REVIEWER) {
+            actorDisplayName = resolveClientReviewerDisplayName(historyEntity.getActorDisplayName(), historyEntity.getActorEmail());
+        } else if (historyEntity.getActorType() == PostActorType.SYSTEM) {
+            actorDisplayName = historyEntity.getActorDisplayName() != null && !historyEntity.getActorDisplayName().isBlank()
+                    ? historyEntity.getActorDisplayName().trim()
+                    : "SocialRaven";
+        } else if (historyEntity.getActorDisplayName() != null && !historyEntity.getActorDisplayName().isBlank()) {
+            actorDisplayName = historyEntity.getActorDisplayName().trim();
+        } else {
+            actorDisplayName = resolveDisplayName(historyEntity.getActorUserId());
+        }
+        return new PostCollectionReviewHistoryResponse(
+                historyEntity.getId(),
+                historyEntity.getAction().name(),
+                historyEntity.getFromStatus().name(),
+                historyEntity.getToStatus().name(),
+                historyEntity.getActorType() != null ? historyEntity.getActorType().name() : PostActorType.WORKSPACE_USER.name(),
+                historyEntity.getActorUserId(),
+                actorDisplayName,
+                historyEntity.getNote(),
+                historyEntity.getCreatedAt()
+        );
+    }
+
+    private void transitionToInReview(PostCollectionEntity collection,
+                                      String actorUserId,
+                                      String note,
+                                      int requiredApprovalSteps) {
+        assertReadyForScheduling(collection);
+        PostReviewStatus fromStatus = collection.getReviewStatus() != null
+                ? collection.getReviewStatus()
+                : PostReviewStatus.DRAFT;
+        PostReviewAction action = fromStatus == PostReviewStatus.CHANGES_REQUESTED
+                ? PostReviewAction.RESUBMITTED
+                : PostReviewAction.SUBMITTED;
+        OffsetDateTime now = OffsetDateTime.now();
+
+        collection.setDraft(true);
+        collection.setReviewStatus(PostReviewStatus.IN_REVIEW);
+        collection.setReviewSubmittedAt(now);
+        collection.setReviewSubmittedBy(actorUserId);
+        collection.setApprovedAt(null);
+        collection.setApprovedBy(null);
+        collection.setApprovalLocked(false);
+        collection.setApprovalLockedAt(null);
+        collection.setRequiredApprovalSteps(requiredApprovalSteps);
+        collection.setCompletedApprovalSteps(0);
+        collection.setNextApprovalStage(requiredApprovalSteps > 0 ? PostApprovalStage.APPROVER : null);
+        resetApprovalReminderState(collection, now);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.DRAFT);
+            }
+        }
+
+        recordReviewEvent(collection.getId(), action, fromStatus, PostReviewStatus.IN_REVIEW, actorUserId, note);
+    }
+
+    private void transitionToApprovedAndScheduled(PostCollectionEntity collection, String actorUserId, String note) {
+        transitionToApprovedAndScheduled(
+                collection,
+                actorUserId,
+                null,
+                null,
+                PostActorType.WORKSPACE_USER,
+                note
+        );
+    }
+
+    private void transitionToApprovedAndScheduled(PostCollectionEntity collection,
+                                                  String actorUserId,
+                                                  String actorDisplayName,
+                                                  String actorEmail,
+                                                  PostActorType actorType,
+                                                  String note) {
+        assertReadyForScheduling(collection);
+        PostReviewStatus fromStatus = collection.getReviewStatus() != null
+                ? collection.getReviewStatus()
+                : PostReviewStatus.DRAFT;
+        OffsetDateTime now = OffsetDateTime.now();
+
+        collection.setDraft(false);
+        collection.setReviewStatus(PostReviewStatus.APPROVED);
+        collection.setApprovedAt(now);
+        collection.setApprovedBy(actorUserId);
+        collection.setApprovalLocked(true);
+        collection.setApprovalLockedAt(now);
+        int requiredApprovalSteps = collection.getRequiredApprovalSteps() > 0
+                ? collection.getRequiredApprovalSteps()
+                : 1;
+        collection.setRequiredApprovalSteps(requiredApprovalSteps);
+        collection.setCompletedApprovalSteps(requiredApprovalSteps);
+        collection.setNextApprovalStage(null);
+        if (collection.getReviewSubmittedAt() == null) {
+            collection.setReviewSubmittedAt(collection.getApprovedAt());
+            collection.setReviewSubmittedBy(actorUserId);
+        }
+        clearApprovalReminderState(collection);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.SCHEDULED);
+            }
+        }
+
+        recordReviewEvent(
+                collection.getId(),
+                PostReviewAction.APPROVED,
+                fromStatus,
+                PostReviewStatus.APPROVED,
+                actorUserId,
+                actorDisplayName,
+                actorEmail,
+                actorType,
+                note
+        );
+    }
+
+    private void transitionToOwnerFinalReview(PostCollectionEntity collection, String actorUserId, String note) {
+        transitionToOwnerFinalReview(
+                collection,
+                actorUserId,
+                null,
+                null,
+                PostActorType.WORKSPACE_USER,
+                note
+        );
+    }
+
+    private void transitionToOwnerFinalReview(PostCollectionEntity collection,
+                                              String actorUserId,
+                                              String actorDisplayName,
+                                              String actorEmail,
+                                              PostActorType actorType,
+                                              String note) {
+        assertReadyForScheduling(collection);
+        if (collection.getRequiredApprovalSteps() < 2) {
+            throw new SocialRavenException("This collection does not require multi-step approval", HttpStatus.BAD_REQUEST);
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+
+        collection.setDraft(true);
+        collection.setReviewStatus(PostReviewStatus.IN_REVIEW);
+        collection.setCompletedApprovalSteps(1);
+        collection.setNextApprovalStage(PostApprovalStage.OWNER_FINAL);
+        collection.setApprovedAt(null);
+        collection.setApprovedBy(null);
+        collection.setApprovalLocked(false);
+        collection.setApprovalLockedAt(null);
+        resetApprovalReminderState(collection, now);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.DRAFT);
+            }
+        }
+
+        recordReviewEvent(
+                collection.getId(),
+                PostReviewAction.STEP_APPROVED,
+                PostReviewStatus.IN_REVIEW,
+                PostReviewStatus.IN_REVIEW,
+                actorUserId,
+                actorDisplayName,
+                actorEmail,
+                actorType,
+                note
+        );
+    }
+
+    private void transitionToScheduledWithoutReview(PostCollectionEntity collection) {
+        assertReadyForScheduling(collection);
+        collection.setDraft(false);
+        collection.setReviewStatus(PostReviewStatus.DRAFT);
+        collection.setReviewSubmittedAt(null);
+        collection.setReviewSubmittedBy(null);
+        collection.setApprovedAt(null);
+        collection.setApprovedBy(null);
+        collection.setApprovalLocked(false);
+        collection.setApprovalLockedAt(null);
+        collection.setRequiredApprovalSteps(0);
+        collection.setCompletedApprovalSteps(0);
+        collection.setNextApprovalStage(null);
+        clearApprovalReminderState(collection);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.SCHEDULED);
+            }
+        }
+    }
+
+    private void transitionToChangesRequested(PostCollectionEntity collection, String actorUserId, String note) {
+        transitionToChangesRequested(
+                collection,
+                actorUserId,
+                null,
+                null,
+                PostActorType.WORKSPACE_USER,
+                note
+        );
+    }
+
+    private void transitionToChangesRequested(PostCollectionEntity collection,
+                                              String actorUserId,
+                                              String actorDisplayName,
+                                              String actorEmail,
+                                              PostActorType actorType,
+                                              String note) {
+        PostReviewStatus fromStatus = collection.getReviewStatus() != null
+                ? collection.getReviewStatus()
+                : PostReviewStatus.DRAFT;
+
+        collection.setDraft(true);
+        collection.setReviewStatus(PostReviewStatus.CHANGES_REQUESTED);
+        collection.setApprovedAt(null);
+        collection.setApprovedBy(null);
+        collection.setApprovalLocked(false);
+        collection.setApprovalLockedAt(null);
+        collection.setCompletedApprovalSteps(0);
+        collection.setNextApprovalStage(null);
+        clearApprovalReminderState(collection);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.DRAFT);
+            }
+        }
+
+        recordReviewEvent(
+                collection.getId(),
+                PostReviewAction.CHANGES_REQUESTED,
+                fromStatus,
+                PostReviewStatus.CHANGES_REQUESTED,
+                actorUserId,
+                actorDisplayName,
+                actorEmail,
+                actorType,
+                note
+        );
+    }
+
+    private void transitionToReapprovalRequired(PostCollectionEntity collection,
+                                                String actorUserId,
+                                                String note,
+                                                int requiredApprovalSteps) {
+        assertReadyForScheduling(collection);
+        OffsetDateTime now = OffsetDateTime.now();
+        collection.setDraft(true);
+        collection.setReviewStatus(PostReviewStatus.IN_REVIEW);
+        collection.setReviewSubmittedAt(now);
+        collection.setReviewSubmittedBy(actorUserId);
+        collection.setApprovedAt(null);
+        collection.setApprovedBy(null);
+        collection.setApprovalLocked(false);
+        collection.setApprovalLockedAt(null);
+        collection.setRequiredApprovalSteps(requiredApprovalSteps);
+        collection.setCompletedApprovalSteps(0);
+        collection.setNextApprovalStage(requiredApprovalSteps > 0 ? PostApprovalStage.APPROVER : null);
+        resetApprovalReminderState(collection, now);
+
+        if (collection.getPosts() != null) {
+            for (PostEntity post : collection.getPosts()) {
+                post.setScheduledTime(collection.getScheduledTime());
+                post.setPostStatus(PostStatus.DRAFT);
+            }
+        }
+
+        recordReviewEvent(
+                collection.getId(),
+                PostReviewAction.REAPPROVAL_REQUIRED,
+                PostReviewStatus.APPROVED,
+                PostReviewStatus.IN_REVIEW,
+                actorUserId,
+                note
+        );
+    }
+
+    private void recordReviewEvent(Long collectionId,
+                                   PostReviewAction action,
+                                   PostReviewStatus fromStatus,
+                                   PostReviewStatus toStatus,
+                                   String actorUserId,
+                                   String note) {
+        recordReviewEvent(
+                collectionId,
+                action,
+                fromStatus,
+                toStatus,
+                actorUserId,
+                null,
+                null,
+                PostActorType.WORKSPACE_USER,
+                note
+        );
+    }
+
+    private void recordReviewEvent(Long collectionId,
+                                   PostReviewAction action,
+                                   PostReviewStatus fromStatus,
+                                   PostReviewStatus toStatus,
+                                   String actorUserId,
+                                   String actorDisplayName,
+                                   String actorEmail,
+                                   PostActorType actorType,
+                                   String note) {
+        if (collectionId == null) {
+            return;
+        }
+
+        PostCollectionReviewHistoryEntity historyEntity = new PostCollectionReviewHistoryEntity();
+        historyEntity.setPostCollectionId(collectionId);
+        historyEntity.setAction(action);
+        historyEntity.setFromStatus(fromStatus);
+        historyEntity.setToStatus(toStatus);
+        historyEntity.setActorUserId(actorUserId);
+        historyEntity.setActorType(actorType != null ? actorType : PostActorType.WORKSPACE_USER);
+        historyEntity.setActorDisplayName(actorDisplayName != null && !actorDisplayName.isBlank() ? actorDisplayName.trim() : null);
+        historyEntity.setActorEmail(actorEmail != null && !actorEmail.isBlank() ? actorEmail.trim().toLowerCase() : null);
+        historyEntity.setNote(note != null && !note.isBlank() ? note.trim() : null);
+        historyEntity.setCreatedAt(OffsetDateTime.now());
+        postCollectionReviewHistoryRepo.save(historyEntity);
+    }
+
+    private void assertReadyForScheduling(PostCollectionEntity collection) {
+        if (collection.getScheduledTime() == null) {
+            throw new SocialRavenException("scheduledTime is required before review or approval", HttpStatus.BAD_REQUEST);
+        }
+        if (CollectionUtils.isEmpty(collection.getPosts())) {
+            throw new SocialRavenException(
+                    "Select at least one connected account before review or approval",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+    }
+
+    private SubmissionDecision resolveSubmissionDecision(String workspaceId, String userId, WorkspaceRole callerRole) {
+        WorkspaceApprovalMode approvalMode = resolveApprovalMode(workspaceId);
+        EnumSet<WorkspaceCapability> capabilities = workspaceCapabilityService.getEffectiveCapabilities(
+                workspaceId,
+                userId,
+                callerRole
+        );
+
+        return switch (approvalMode) {
+            case NONE -> new SubmissionDecision(false, 0, approvalMode);
+            case OPTIONAL -> capabilities.contains(WorkspaceCapability.PUBLISH_POSTS)
+                    ? new SubmissionDecision(false, 0, approvalMode)
+                    : new SubmissionDecision(true, 1, approvalMode);
+            case REQUIRED -> new SubmissionDecision(true, 1, approvalMode);
+            case MULTI_STEP -> new SubmissionDecision(true, 2, approvalMode);
+        };
+    }
+
+    private WorkspaceApprovalMode resolveApprovalMode(String workspaceId) {
+        WorkspaceEntity workspace = workspaceRepo.findByIdAndDeletedAtIsNull(workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Workspace not found", HttpStatus.NOT_FOUND));
+        return workspace.getApprovalMode() != null
+                ? workspace.getApprovalMode()
+                : WorkspaceApprovalMode.OPTIONAL;
+    }
+
+    private void assertCanApprove(String workspaceId,
+                                  String userId,
+                                  WorkspaceRole callerRole,
+                                  PostCollectionEntity collection) {
+        PostApprovalStage nextApprovalStage = collection.getNextApprovalStage() != null
+                ? collection.getNextApprovalStage()
+                : PostApprovalStage.APPROVER;
+
+        if (nextApprovalStage == PostApprovalStage.OWNER_FINAL) {
+            if (callerRole != WorkspaceRole.OWNER) {
+                throw new SocialRavenException("Only the workspace owner can give final approval", HttpStatus.FORBIDDEN);
+            }
+            return;
+        }
+
+        if (!workspaceCapabilityService.hasCapability(
+                workspaceId,
+                userId,
+                callerRole,
+                WorkspaceCapability.APPROVE_POSTS
+        )) {
+            throw new SocialRavenException("Approval capability is required", HttpStatus.FORBIDDEN);
+        }
+    }
+
+    private void assertCanRequestChanges(String workspaceId, String userId, WorkspaceRole callerRole) {
+        if (!workspaceCapabilityService.hasCapability(
+                workspaceId,
+                userId,
+                callerRole,
+                WorkspaceCapability.REQUEST_CHANGES
+        )) {
+            throw new SocialRavenException("Request changes capability is required", HttpStatus.FORBIDDEN);
+        }
+    }
+
+    private void enqueueScheduledPosts(List<PostEntity> posts) {
+        if (CollectionUtils.isEmpty(posts)) {
+            return;
+        }
+
+        try (Jedis jedis = jedisPool.getResource()) {
+            for (PostEntity post : posts) {
+                if (post.getId() == null || post.getScheduledTime() == null || post.getPostStatus() != PostStatus.SCHEDULED) {
+                    continue;
+                }
+                long epochUtcMillis = post.getScheduledTime().toInstant().toEpochMilli();
+                jedis.zadd(PostPoolHelper.getPostsPoolName(), epochUtcMillis, post.getId().toString());
+                log.info("Scheduled Post Added to Redis pool: postId={}, scheduleUTC={}", post.getId(), post.getScheduledTime());
+            }
+        }
+    }
+
+    private void removePostIdsFromRedis(List<String> postIds) {
+        if (postIds == null || postIds.isEmpty()) {
+            return;
+        }
+        try (Jedis jedis = jedisPool.getResource()) {
+            jedis.zrem(PostPoolHelper.getPostsPoolName(), postIds.toArray(String[]::new));
+        }
+    }
+
+    private List<String> collectScheduledRedisKeys(List<PostEntity> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return List.of();
+        }
+        return posts.stream()
+                .filter(post -> post.getPostStatus() == PostStatus.SCHEDULED && post.getId() != null)
+                .map(post -> post.getId().toString())
+                .toList();
+    }
+
+    private void resetApprovalReminderState(PostCollectionEntity collection, OffsetDateTime referenceTime) {
+        OffsetDateTime now = referenceTime != null ? referenceTime : OffsetDateTime.now();
+        collection.setApprovalReminderAttemptCount(0);
+        collection.setLastApprovalReminderSentAt(null);
+        collection.setNextApprovalReminderAt(now.plusHours(initialApprovalReminderDelayHours));
+        collection.setApprovalEscalatedAt(null);
+    }
+
+    private void clearApprovalReminderState(PostCollectionEntity collection) {
+        collection.setApprovalReminderAttemptCount(0);
+        collection.setLastApprovalReminderSentAt(null);
+        collection.setNextApprovalReminderAt(null);
+        collection.setApprovalEscalatedAt(null);
+    }
+
+    private int resolveReapprovalStepCount(String workspaceId) {
+        WorkspaceApprovalMode approvalMode = resolveApprovalMode(workspaceId);
+        return approvalMode == WorkspaceApprovalMode.MULTI_STEP ? 2 : 1;
+    }
+
+    private MaterialState captureMaterialState(PostCollectionEntity collection) {
+        String normalizedDescription = collection.getDescription() != null ? collection.getDescription() : "";
+        String normalizedPlatformConfigs = normalizeJson(collection.getPlatformConfigs());
+        List<String> mediaKeys = collection.getMediaFiles() == null
+                ? List.of()
+                : collection.getMediaFiles().stream()
+                .map(PostMediaEntity::getFileKey)
+                .filter(Objects::nonNull)
+                .sorted()
+                .toList();
+        List<String> accountKeys = collection.getPosts() == null
+                ? List.of()
+                : collection.getPosts().stream()
+                .filter(post -> post.getProvider() != null && post.getProviderUserId() != null)
+                .map(post -> post.getProvider().name() + ":" + post.getProviderUserId())
+                .sorted()
+                .toList();
+        return new MaterialState(
+                normalizedDescription,
+                collection.getScheduledTime(),
+                normalizedPlatformConfigs,
+                mediaKeys,
+                accountKeys
+        );
+    }
+
+    private List<String> describeMaterialChanges(MaterialState before, MaterialState after) {
+        List<String> changedFields = new ArrayList<>();
+        if (!Objects.equals(before.description(), after.description())) {
+            changedFields.add("caption");
+        }
+        if (!Objects.equals(before.scheduledTime(), after.scheduledTime())) {
+            changedFields.add("schedule");
+        }
+        if (!Objects.equals(before.platformConfigs(), after.platformConfigs())) {
+            changedFields.add("platform settings");
+        }
+        if (!Objects.equals(before.mediaKeys(), after.mediaKeys())) {
+            changedFields.add("media");
+        }
+        if (!Objects.equals(before.accountKeys(), after.accountKeys())) {
+            changedFields.add("target accounts");
+        }
+        return changedFields;
+    }
+
+    private String summarizeMaterialChanges(List<String> changedFields) {
+        if (changedFields == null || changedFields.isEmpty()) {
+            return "Material changes require reapproval.";
+        }
+        return "Material changes detected: " + String.join(", ", changedFields) + ". Reapproval is required.";
+    }
+
+    private String normalizeJson(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(objectMapper.readTree(value));
+        } catch (JsonProcessingException e) {
+            return value;
+        }
+    }
+
+    private String resolveDisplayName(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return "Unknown user";
+        }
+        ClerkUserService.UserProfile profile = clerkUserService.getUserProfile(userId);
+        if (profile == null) {
+            return userId;
+        }
+
+        String first = profile.firstName() != null ? profile.firstName().trim() : "";
+        String last = profile.lastName() != null ? profile.lastName().trim() : "";
+        String fullName = (first + " " + last).trim();
+        if (!fullName.isEmpty()) {
+            return fullName;
+        }
+        if (profile.email() != null && !profile.email().isBlank()) {
+            return profile.email().trim();
+        }
+        return userId;
+    }
+
+    private String resolveClientReviewerDisplayName(String actorDisplayName, String actorEmail) {
+        if (actorDisplayName != null && !actorDisplayName.isBlank()) {
+            return actorDisplayName.trim();
+        }
+        if (actorEmail != null && !actorEmail.isBlank()) {
+            return actorEmail.trim();
+        }
+        return "Client reviewer";
     }
 
     private boolean isAllFailed(List<PostEntity> posts) {
@@ -776,5 +1648,17 @@ public class PostService {
     private boolean hasRecoverableFailedPosts(List<PostEntity> posts) {
         return posts != null
                 && posts.stream().anyMatch(post -> post.getPostStatus() == PostStatus.FAILED);
+    }
+
+    private record SubmissionDecision(boolean requiresReview,
+                                      int requiredApprovalSteps,
+                                      WorkspaceApprovalMode approvalMode) {
+    }
+
+    private record MaterialState(String description,
+                                 OffsetDateTime scheduledTime,
+                                 String platformConfigs,
+                                 List<String> mediaKeys,
+                                 List<String> accountKeys) {
     }
 }

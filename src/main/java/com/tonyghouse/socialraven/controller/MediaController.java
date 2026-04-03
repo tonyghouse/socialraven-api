@@ -53,7 +53,7 @@ public class MediaController {
 
 
 
-    @RequiresRole(WorkspaceRole.MEMBER)
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/presign")
     public ResponseEntity<Map<String, String>> getPresignedUrl(
             @RequestParam String fileName,

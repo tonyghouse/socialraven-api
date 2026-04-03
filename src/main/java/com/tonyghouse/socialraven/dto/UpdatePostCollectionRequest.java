@@ -33,4 +33,10 @@ public class UpdatePostCollectionRequest {
      * Only applied when the collection is still fully SCHEDULED.
      */
     private List<ConnectedAccount> connectedAccounts;
+
+    /**
+     * Required when editing approval-locked content.
+     * Material changes will move approved content back into review.
+     */
+    private Boolean acknowledgeApprovalLock;
 }
