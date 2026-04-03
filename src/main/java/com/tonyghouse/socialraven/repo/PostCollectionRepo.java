@@ -43,6 +43,36 @@ public interface PostCollectionRepo extends JpaRepository<PostCollectionEntity, 
             SELECT DISTINCT pc
             FROM PostCollectionEntity pc
             LEFT JOIN FETCH pc.posts
+            WHERE pc.workspaceId IN :workspaceIds
+              AND pc.reviewStatus IN :reviewStatuses
+            ORDER BY pc.reviewSubmittedAt ASC
+            """)
+    List<PostCollectionEntity> findAgencyOpsReviewCollections(
+            @Param("workspaceIds") List<String> workspaceIds,
+            @Param("reviewStatuses") List<PostReviewStatus> reviewStatuses
+    );
+
+    @Query("""
+            SELECT DISTINCT pc
+            FROM PostCollectionEntity pc
+            LEFT JOIN FETCH pc.posts
+            WHERE pc.workspaceId IN :workspaceIds
+              AND pc.draft = false
+              AND pc.scheduledTime IS NOT NULL
+              AND pc.scheduledTime >= :fromDate
+              AND pc.scheduledTime <= :toDate
+            ORDER BY pc.scheduledTime ASC
+            """)
+    List<PostCollectionEntity> findAgencyOpsScheduledCollections(
+            @Param("workspaceIds") List<String> workspaceIds,
+            @Param("fromDate") OffsetDateTime fromDate,
+            @Param("toDate") OffsetDateTime toDate
+    );
+
+    @Query("""
+            SELECT DISTINCT pc
+            FROM PostCollectionEntity pc
+            LEFT JOIN FETCH pc.posts
             WHERE pc.draft = false
               AND pc.failureState = :failureState
             """)

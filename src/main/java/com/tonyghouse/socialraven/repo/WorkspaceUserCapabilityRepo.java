@@ -12,6 +12,7 @@ import java.util.Optional;
 public interface WorkspaceUserCapabilityRepo extends JpaRepository<WorkspaceUserCapabilityEntity, Long> {
     List<WorkspaceUserCapabilityEntity> findAllByWorkspaceIdAndUserId(String workspaceId, String userId);
     List<WorkspaceUserCapabilityEntity> findAllByWorkspaceIdAndCapability(String workspaceId, WorkspaceCapability capability);
+    List<WorkspaceUserCapabilityEntity> findAllByWorkspaceIdInAndCapability(List<String> workspaceIds, WorkspaceCapability capability);
     Optional<WorkspaceUserCapabilityEntity> findByWorkspaceIdAndUserIdAndCapability(
             String workspaceId,
             String userId,

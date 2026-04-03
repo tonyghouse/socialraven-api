@@ -156,7 +156,9 @@ public class WorkspaceCapabilityService {
                     WorkspaceCapability.PUBLISH_POSTS,
                     WorkspaceCapability.REQUEST_CHANGES,
                     WorkspaceCapability.MANAGE_APPROVAL_RULES,
-                    WorkspaceCapability.SHARE_REVIEW_LINKS
+                    WorkspaceCapability.SHARE_REVIEW_LINKS,
+                    WorkspaceCapability.MANAGE_ASSET_LIBRARY,
+                    WorkspaceCapability.EXPORT_CLIENT_REPORTS
             );
             case EDITOR -> EnumSet.of(WorkspaceCapability.REQUEST_CHANGES);
             case READ_ONLY -> EnumSet.noneOf(WorkspaceCapability.class);
