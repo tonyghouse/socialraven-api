@@ -212,7 +212,7 @@ public class UserPlanService {
         resp.setStartDate(entity.getCreatedAt().toString());
         resp.setTrialEndsAt(entity.getTrialEndsAt() != null ? entity.getTrialEndsAt().toString() : null);
         resp.setCancelAtPeriodEnd(entity.isCancelAtPeriodEnd());
-        resp.setStripeSubscriptionId(entity.getStripeSubscriptionId());
+        resp.setPaddleSubscriptionId(entity.getPaddleSubscriptionId());
         resp.setPostsLimit(effectivePostsLimit);
         resp.setAccountsLimit(effectiveAccountsLimit);
         return resp;

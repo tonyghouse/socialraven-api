@@ -10,7 +10,7 @@ public class UserPlanResponse {
     private String startDate;
     private String trialEndsAt;
     private boolean cancelAtPeriodEnd;
-    private String stripeSubscriptionId;
+    private String paddleSubscriptionId;
     /** Effective posts/month limit; null = unlimited */
     private Integer postsLimit;
     /** Effective connected-accounts limit; null = unlimited */
