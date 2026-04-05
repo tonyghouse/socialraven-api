@@ -14,5 +14,8 @@ public class PostCollaborationThreadRequest {
     private Integer anchorStart;
     private Integer anchorEnd;
     private String anchorText;
+    private Long mediaId;
+    private Double mediaMarkerX;
+    private Double mediaMarkerY;
     private String suggestedText;
 }

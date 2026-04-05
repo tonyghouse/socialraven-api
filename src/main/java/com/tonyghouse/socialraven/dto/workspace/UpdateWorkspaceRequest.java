@@ -11,5 +11,8 @@ public class UpdateWorkspaceRequest {
     private String companyName;
     private String logoS3Key;
     private WorkspaceApprovalMode approvalMode;
+    private Boolean autoScheduleAfterApproval;
     private List<String> approverUserIds;
+    private List<String> publisherUserIds;
+    private List<WorkspaceApprovalRuleRequest> approvalRules;
 }

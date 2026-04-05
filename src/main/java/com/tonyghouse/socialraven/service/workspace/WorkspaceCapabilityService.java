@@ -61,21 +61,54 @@ public class WorkspaceCapabilityService {
     }
 
     public List<String> getExplicitApproverUserIds(String workspaceId) {
-        return workspaceUserCapabilityRepo.findAllByWorkspaceIdAndCapability(workspaceId, WorkspaceCapability.APPROVE_POSTS)
-                .stream()
+        return getExplicitUserIdsForCapability(workspaceId, WorkspaceCapability.APPROVE_POSTS);
+    }
+
+    public List<String> getExplicitPublisherUserIds(String workspaceId) {
+        return getExplicitUserIdsForCapability(workspaceId, WorkspaceCapability.PUBLISH_POSTS);
+    }
+
+    @Transactional
+    public List<String> replaceExplicitApprovers(String workspaceId, Collection<String> requestedUserIds) {
+        return replaceExplicitEditorCapabilityAssignments(
+                workspaceId,
+                requestedUserIds,
+                WorkspaceCapability.APPROVE_POSTS,
+                "Read-only members cannot be assigned as approvers"
+        );
+    }
+
+    @Transactional
+    public List<String> replaceExplicitPublishers(String workspaceId, Collection<String> requestedUserIds) {
+        return replaceExplicitEditorCapabilityAssignments(
+                workspaceId,
+                requestedUserIds,
+                WorkspaceCapability.PUBLISH_POSTS,
+                "Read-only members cannot be assigned as publishers"
+        );
+    }
+
+    private List<String> getExplicitUserIdsForCapability(String workspaceId, WorkspaceCapability capability) {
+        return workspaceUserCapabilityRepo.findAllByWorkspaceIdAndCapability(workspaceId, capability).stream()
                 .map(WorkspaceUserCapabilityEntity::getUserId)
                 .sorted()
                 .toList();
     }
 
-    @Transactional
-    public List<String> replaceExplicitApprovers(String workspaceId, Collection<String> requestedUserIds) {
-        List<String> normalizedApproverUserIds = normalizeExplicitApproverUserIds(workspaceId, requestedUserIds);
-        Set<String> requestedIds = new LinkedHashSet<>(normalizedApproverUserIds);
+    private List<String> replaceExplicitEditorCapabilityAssignments(String workspaceId,
+                                                                    Collection<String> requestedUserIds,
+                                                                    WorkspaceCapability capability,
+                                                                    String readOnlyMessage) {
+        List<String> normalizedUserIds = normalizeExplicitEditorCapabilityUserIds(
+                workspaceId,
+                requestedUserIds,
+                readOnlyMessage
+        );
+        Set<String> requestedIds = new LinkedHashSet<>(normalizedUserIds);
 
         List<WorkspaceUserCapabilityEntity> existing = workspaceUserCapabilityRepo.findAllByWorkspaceIdAndCapability(
                 workspaceId,
-                WorkspaceCapability.APPROVE_POSTS
+                capability
         );
 
         List<WorkspaceUserCapabilityEntity> staleAssignments = existing.stream()
@@ -98,15 +131,25 @@ public class WorkspaceCapabilityService {
             WorkspaceUserCapabilityEntity entity = new WorkspaceUserCapabilityEntity();
             entity.setWorkspaceId(workspaceId);
             entity.setUserId(userId);
-            entity.setCapability(WorkspaceCapability.APPROVE_POSTS);
+            entity.setCapability(capability);
             entity.setCreatedAt(now);
             workspaceUserCapabilityRepo.save(entity);
         }
 
-        return normalizedApproverUserIds;
+        return normalizedUserIds;
     }
 
     public List<String> normalizeExplicitApproverUserIds(String workspaceId, Collection<String> requestedUserIds) {
+        return normalizeExplicitEditorCapabilityUserIds(
+                workspaceId,
+                requestedUserIds,
+                "Read-only members cannot be assigned as approvers"
+        );
+    }
+
+    private List<String> normalizeExplicitEditorCapabilityUserIds(String workspaceId,
+                                                                  Collection<String> requestedUserIds,
+                                                                  String readOnlyMessage) {
         Set<String> uniqueIds = requestedUserIds == null
                 ? Set.of()
                 : requestedUserIds.stream()
@@ -118,7 +161,7 @@ public class WorkspaceCapabilityService {
                 .collect(Collectors.toMap(WorkspaceMemberEntity::getUserId, WorkspaceMemberEntity::getRole));
 
         List<String> normalized = uniqueIds.stream()
-                .map(userId -> normalizeApproverUserId(userId, workspaceRolesByUserId))
+                .map(userId -> normalizeExplicitEditorCapabilityUserId(userId, workspaceRolesByUserId, readOnlyMessage))
                 .filter(userId -> userId != null)
                 .sorted()
                 .toList();
@@ -131,13 +174,15 @@ public class WorkspaceCapabilityService {
         workspaceUserCapabilityRepo.deleteAllByWorkspaceIdAndUserId(workspaceId, userId);
     }
 
-    private String normalizeApproverUserId(String userId, Map<String, WorkspaceRole> workspaceRolesByUserId) {
+    private String normalizeExplicitEditorCapabilityUserId(String userId,
+                                                           Map<String, WorkspaceRole> workspaceRolesByUserId,
+                                                           String readOnlyMessage) {
         WorkspaceRole role = workspaceRolesByUserId.get(userId);
         if (role == null) {
-            throw new SocialRavenException("Approver must be an active workspace member", HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException("Capability assignee must be an active workspace member", HttpStatus.BAD_REQUEST);
         }
         if (role == WorkspaceRole.READ_ONLY) {
-            throw new SocialRavenException("Read-only members cannot be assigned as approvers", HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException(readOnlyMessage, HttpStatus.BAD_REQUEST);
         }
         if (role == WorkspaceRole.OWNER || role == WorkspaceRole.ADMIN) {
             return null;

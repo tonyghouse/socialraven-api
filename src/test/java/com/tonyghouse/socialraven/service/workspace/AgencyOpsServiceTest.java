@@ -30,6 +30,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceUserCapabilityRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -185,6 +186,157 @@ class AgencyOpsServiceTest {
                     assertThat(item.getAtRiskPublishCount()).isEqualTo(2);
                     assertThat(item.getHealthStatus()).isEqualTo("CRITICAL");
                 });
+    }
+
+    @Test
+    void getAgencyOpsAppliesFiltersAcrossQueueRiskWorkloadAndWorkspaceHealth() {
+        WorkspaceMemberRepo workspaceMemberRepo = mock(WorkspaceMemberRepo.class);
+        WorkspaceRepo workspaceRepo = mock(WorkspaceRepo.class);
+        CompanyRepo companyRepo = mock(CompanyRepo.class);
+        PostCollectionRepo postCollectionRepo = mock(PostCollectionRepo.class);
+        WorkspaceCapabilityService workspaceCapabilityService = mock(WorkspaceCapabilityService.class);
+        WorkspaceUserCapabilityRepo workspaceUserCapabilityRepo = mock(WorkspaceUserCapabilityRepo.class);
+        ClerkUserService clerkUserService = mock(ClerkUserService.class);
+
+        AgencyOpsService service = createService(
+                workspaceMemberRepo,
+                workspaceRepo,
+                companyRepo,
+                postCollectionRepo,
+                workspaceCapabilityService,
+                workspaceUserCapabilityRepo,
+                clerkUserService
+        );
+
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+
+        when(workspaceMemberRepo.findAllByUserId("agent_1")).thenReturn(List.of(
+                membership("workspace_1", "agent_1", WorkspaceRole.ADMIN),
+                membership("workspace_2", "agent_1", WorkspaceRole.OWNER)
+        ));
+        when(workspaceRepo.findAllById(any())).thenReturn(List.of(
+                workspace("workspace_1", "Client Alpha", "company_1"),
+                workspace("workspace_2", "Client Beta", "company_2")
+        ));
+        when(companyRepo.findAllById(any())).thenReturn(List.of(
+                company("company_1", "Alpha Group"),
+                company("company_2", "Beta Holdings")
+        ));
+        when(workspaceCapabilityService.getEffectiveCapabilities("workspace_1", "agent_1", WorkspaceRole.ADMIN))
+                .thenReturn(EnumSet.of(WorkspaceCapability.APPROVE_POSTS, WorkspaceCapability.REQUEST_CHANGES));
+        when(workspaceCapabilityService.getEffectiveCapabilities("workspace_2", "agent_1", WorkspaceRole.OWNER))
+                .thenReturn(EnumSet.of(WorkspaceCapability.APPROVE_POSTS, WorkspaceCapability.REQUEST_CHANGES));
+
+        when(workspaceMemberRepo.findAllByWorkspaceIdIn(List.of("workspace_1", "workspace_2"))).thenReturn(List.of(
+                membership("workspace_1", "owner_alpha", WorkspaceRole.OWNER),
+                membership("workspace_1", "admin_alpha", WorkspaceRole.ADMIN),
+                membership("workspace_1", "editor_alpha", WorkspaceRole.EDITOR),
+                membership("workspace_2", "owner_beta", WorkspaceRole.OWNER),
+                membership("workspace_2", "admin_beta", WorkspaceRole.ADMIN)
+        ));
+        when(workspaceUserCapabilityRepo.findAllByWorkspaceIdInAndCapability(
+                List.of("workspace_1", "workspace_2"),
+                WorkspaceCapability.APPROVE_POSTS
+        )).thenReturn(List.of(explicitApprover("workspace_1", "editor_alpha")));
+
+        PostCollectionEntity overdueReview = reviewCollection(
+                101L,
+                "workspace_1",
+                PostReviewStatus.IN_REVIEW,
+                now.plusHours(12),
+                now.minusHours(1),
+                null
+        );
+        PostCollectionEntity escalatedReview = reviewCollection(
+                202L,
+                "workspace_2",
+                PostReviewStatus.IN_REVIEW,
+                now.plusHours(6),
+                now.minusHours(2),
+                now.minusHours(1)
+        );
+        PostCollectionEntity changesRequested = reviewCollection(
+                303L,
+                "workspace_1",
+                PostReviewStatus.CHANGES_REQUESTED,
+                now.plusHours(18),
+                null,
+                null
+        );
+        PostCollectionEntity recoveryRequired = scheduledRiskCollection(
+                404L,
+                "workspace_2",
+                now.plusDays(2),
+                RecoveryState.RECOVERY_REQUIRED
+        );
+
+        when(postCollectionRepo.findAgencyOpsReviewCollections(
+                List.of("workspace_1", "workspace_2"),
+                List.of(PostReviewStatus.IN_REVIEW, PostReviewStatus.CHANGES_REQUESTED)
+        )).thenReturn(List.of(overdueReview, escalatedReview, changesRequested));
+        when(postCollectionRepo.findAgencyOpsScheduledCollections(
+                eq(List.of("workspace_1", "workspace_2")),
+                any(OffsetDateTime.class),
+                any(OffsetDateTime.class)
+        )).thenReturn(List.of(recoveryRequired));
+
+        when(clerkUserService.getUserProfile("owner_alpha"))
+                .thenReturn(new ClerkUserService.UserProfile("Owner", "Alpha", "owner.alpha@example.com"));
+        when(clerkUserService.getUserProfile("admin_alpha"))
+                .thenReturn(new ClerkUserService.UserProfile("Admin", "Alpha", "admin.alpha@example.com"));
+        when(clerkUserService.getUserProfile("editor_alpha"))
+                .thenReturn(new ClerkUserService.UserProfile("Editor", "Alpha", "editor.alpha@example.com"));
+        when(clerkUserService.getUserProfile("owner_beta"))
+                .thenReturn(new ClerkUserService.UserProfile("Owner", "Beta", "owner.beta@example.com"));
+        when(clerkUserService.getUserProfile("admin_beta"))
+                .thenReturn(new ClerkUserService.UserProfile("Admin", "Beta", "admin.beta@example.com"));
+
+        AgencyOpsResponse response = service.getAgencyOps(
+                "agent_1",
+                "workspace_1",
+                "editor_alpha",
+                "OVERDUE",
+                "NEXT_24_HOURS",
+                "America/New_York"
+        );
+
+        assertThat(response.getWorkspaces()).hasSize(2);
+        assertThat(response.getApprovers()).hasSize(5);
+        assertThat(response.getSummary().getWorkspaceCount()).isEqualTo(2);
+        assertThat(response.getSummary().getPendingApprovalCount()).isEqualTo(1);
+        assertThat(response.getSummary().getOverdueApprovalCount()).isEqualTo(1);
+        assertThat(response.getSummary().getEscalatedApprovalCount()).isZero();
+        assertThat(response.getSummary().getAtRiskPublishCount()).isEqualTo(1);
+        assertThat(response.getSummary().getApproverCount()).isEqualTo(1);
+
+        assertThat(response.getQueue()).singleElement().satisfies(item -> {
+            assertThat(item.getCollectionId()).isEqualTo(101L);
+            assertThat(item.getAttentionStatus()).isEqualTo("OVERDUE");
+            assertThat(item.getWorkspaceId()).isEqualTo("workspace_1");
+        });
+        assertThat(response.getOverdueQueue()).singleElement().satisfies(item -> {
+            assertThat(item.getCollectionId()).isEqualTo(101L);
+            assertThat(item.getAttentionStatus()).isEqualTo("OVERDUE");
+        });
+        assertThat(response.getPublishRisk()).singleElement().satisfies(item -> {
+            assertThat(item.getCollectionId()).isEqualTo(101L);
+            assertThat(item.getRiskType()).isEqualTo("APPROVAL_PENDING");
+        });
+        assertThat(response.getWorkload()).singleElement().satisfies(item -> {
+            assertThat(item.getUserId()).isEqualTo("editor_alpha");
+            assertThat(item.getPendingApprovalCount()).isEqualTo(1);
+            assertThat(item.getOverdueApprovalCount()).isEqualTo(1);
+            assertThat(item.getEscalatedApprovalCount()).isZero();
+        });
+        assertThat(response.getWorkspaceHealth()).singleElement().satisfies(item -> {
+            assertThat(item.getWorkspaceId()).isEqualTo("workspace_1");
+            assertThat(item.getPendingApprovalCount()).isEqualTo(1);
+            assertThat(item.getOverdueApprovalCount()).isEqualTo(1);
+            assertThat(item.getEscalatedApprovalCount()).isZero();
+            assertThat(item.getChangesRequestedCount()).isZero();
+            assertThat(item.getAtRiskPublishCount()).isEqualTo(1);
+            assertThat(item.getHealthStatus()).isEqualTo("WATCH");
+        });
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.tonyghouse.socialraven.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.tonyghouse.socialraven.constant.PostCollectionType;
+import com.tonyghouse.socialraven.constant.WorkspaceApprovalMode;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
@@ -23,6 +24,8 @@ public class PostCollection {
     private OffsetDateTime scheduledTime; // stored in UTC in backend
 
     private Map<String, Object> platformConfigs;
+
+    private WorkspaceApprovalMode approvalModeOverride;
 
     /** When true, saves as a draft without scheduling or requiring a scheduledTime. */
     @JsonProperty("isDraft")

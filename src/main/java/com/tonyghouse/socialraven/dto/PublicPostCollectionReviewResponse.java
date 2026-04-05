@@ -18,6 +18,7 @@ public class PublicPostCollectionReviewResponse {
     private String overallStatus;
     private String reviewStatus;
     private String nextApprovalStage;
+    private String shareScope;
     private List<PublicReviewChannelResponse> channels;
     private List<MediaResponse> media;
     private Map<String, Object> platformConfigs;

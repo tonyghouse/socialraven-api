@@ -18,6 +18,7 @@ import com.tonyghouse.socialraven.dto.PostCollaborationThreadResponse;
 import com.tonyghouse.socialraven.entity.PostCollaborationReplyEntity;
 import com.tonyghouse.socialraven.entity.PostCollaborationThreadEntity;
 import com.tonyghouse.socialraven.entity.PostCollectionEntity;
+import com.tonyghouse.socialraven.entity.PostMediaEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceMemberEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.repo.PostCollaborationReplyRepo;
@@ -125,15 +126,38 @@ public class PostCollaborationService {
                 thread.setBody(requireTrimmedBody(request.getBody()));
                 thread.setSuggestionStatus(null);
                 thread.setSuggestedText(null);
-                thread.setAnchorStart(null);
-                thread.setAnchorEnd(null);
-                thread.setAnchorText(null);
+                applyOptionalAnnotation(
+                        thread,
+                        collection,
+                        request.getAnchorStart(),
+                        request.getAnchorEnd(),
+                        request.getAnchorText(),
+                        request.getMediaId(),
+                        request.getMediaMarkerX(),
+                        request.getMediaMarkerY()
+                );
             }
             case SUGGESTION -> {
                 thread.setBody(normalizeOptionalText(request.getBody()));
                 thread.setSuggestionStatus(PostCollaborationSuggestionStatus.PENDING);
                 thread.setSuggestedText(requireNonBlank(request.getSuggestedText(), "suggestedText is required"));
-                applySuggestionAnchor(thread, collection.getDescription(), request.getAnchorStart(), request.getAnchorEnd(), request.getAnchorText());
+                if (request.getMediaId() != null
+                        || request.getMediaMarkerX() != null
+                        || request.getMediaMarkerY() != null) {
+                    throw new SocialRavenException(
+                            "Suggestions only support caption annotations",
+                            HttpStatus.BAD_REQUEST
+                    );
+                }
+                clearMediaAnnotation(thread);
+                applyCaptionAnnotation(
+                        thread,
+                        collection.getDescription(),
+                        request.getAnchorStart(),
+                        request.getAnchorEnd(),
+                        request.getAnchorText(),
+                        true
+                );
             }
         }
 
@@ -146,7 +170,13 @@ public class PostCollaborationService {
                                                                       String workspaceId,
                                                                       String reviewerName,
                                                                       String reviewerEmail,
-                                                                      String body) {
+                                                                      String body,
+                                                                      Integer anchorStart,
+                                                                      Integer anchorEnd,
+                                                                      String anchorText,
+                                                                      Long mediaId,
+                                                                      Double mediaMarkerX,
+                                                                      Double mediaMarkerY) {
         PostCollectionEntity collection = requireCollection(collectionId, workspaceId);
         assertCollectionCommentable(collection);
         ClientReviewerIdentity reviewerIdentity = requireClientReviewerIdentity(reviewerName, reviewerEmail);
@@ -165,9 +195,16 @@ public class PostCollaborationService {
         thread.setMentionedUserIds(writeMentionUserIds(List.of()));
         thread.setSuggestionStatus(null);
         thread.setSuggestedText(null);
-        thread.setAnchorStart(null);
-        thread.setAnchorEnd(null);
-        thread.setAnchorText(null);
+        applyOptionalAnnotation(
+                thread,
+                collection,
+                anchorStart,
+                anchorEnd,
+                anchorText,
+                mediaId,
+                mediaMarkerX,
+                mediaMarkerY
+        );
 
         OffsetDateTime now = OffsetDateTime.now();
         thread.setCreatedAt(now);
@@ -294,27 +331,135 @@ public class PostCollaborationService {
         return buildSingleThreadResponse(workspaceId, thread);
     }
 
-    private void applySuggestionAnchor(PostCollaborationThreadEntity thread,
-                                       String description,
-                                       Integer anchorStart,
-                                       Integer anchorEnd,
-                                       String anchorText) {
+    private void applyCaptionAnnotation(PostCollaborationThreadEntity thread,
+                                        String description,
+                                        Integer anchorStart,
+                                        Integer anchorEnd,
+                                        String anchorText,
+                                        boolean annotationRequired) {
         String currentDescription = description != null ? description : "";
+        boolean annotationProvided =
+                anchorStart != null || anchorEnd != null || anchorText != null;
+        if (!annotationProvided) {
+            if (annotationRequired) {
+                throw new SocialRavenException(
+                        "anchorStart and anchorEnd are required for caption annotations",
+                        HttpStatus.BAD_REQUEST
+                );
+            }
+            clearCaptionAnnotation(thread);
+            return;
+        }
         if (anchorStart == null || anchorEnd == null) {
-            throw new SocialRavenException("anchorStart and anchorEnd are required for suggestions", HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException(
+                    "anchorStart and anchorEnd are required for caption annotations",
+                    HttpStatus.BAD_REQUEST
+            );
         }
         if (anchorStart < 0 || anchorEnd < anchorStart || anchorEnd > currentDescription.length()) {
-            throw new SocialRavenException("Invalid suggestion anchor range", HttpStatus.BAD_REQUEST);
+            throw new SocialRavenException("Invalid caption annotation range", HttpStatus.BAD_REQUEST);
         }
 
         String currentSelection = currentDescription.substring(anchorStart, anchorEnd);
         if (anchorText == null || !currentSelection.equals(anchorText)) {
-            throw new SocialRavenException("Suggestion anchor text does not match the current caption", HttpStatus.CONFLICT);
+            throw new SocialRavenException(
+                    "Caption annotation text does not match the current caption",
+                    HttpStatus.CONFLICT
+            );
         }
 
         thread.setAnchorStart(anchorStart);
         thread.setAnchorEnd(anchorEnd);
         thread.setAnchorText(anchorText);
+        clearMediaAnnotation(thread);
+    }
+
+    private void applyOptionalAnnotation(PostCollaborationThreadEntity thread,
+                                         PostCollectionEntity collection,
+                                         Integer anchorStart,
+                                         Integer anchorEnd,
+                                         String anchorText,
+                                         Long mediaId,
+                                         Double mediaMarkerX,
+                                         Double mediaMarkerY) {
+        boolean captionAnnotationProvided =
+                anchorStart != null || anchorEnd != null || anchorText != null;
+        boolean mediaAnnotationProvided =
+                mediaId != null || mediaMarkerX != null || mediaMarkerY != null;
+
+        if (captionAnnotationProvided && mediaAnnotationProvided) {
+            throw new SocialRavenException(
+                    "Choose either a caption annotation or a media annotation, not both",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        if (captionAnnotationProvided) {
+            applyCaptionAnnotation(
+                    thread,
+                    collection.getDescription(),
+                    anchorStart,
+                    anchorEnd,
+                    anchorText,
+                    false
+            );
+            return;
+        }
+
+        if (mediaAnnotationProvided) {
+            applyMediaAnnotation(thread, collection, mediaId, mediaMarkerX, mediaMarkerY);
+            return;
+        }
+
+        clearCaptionAnnotation(thread);
+        clearMediaAnnotation(thread);
+    }
+
+    private void applyMediaAnnotation(PostCollaborationThreadEntity thread,
+                                      PostCollectionEntity collection,
+                                      Long mediaId,
+                                      Double mediaMarkerX,
+                                      Double mediaMarkerY) {
+        if (mediaId == null || mediaMarkerX == null || mediaMarkerY == null) {
+            throw new SocialRavenException(
+                    "mediaId, mediaMarkerX, and mediaMarkerY are required for media annotations",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        if (mediaMarkerX < 0 || mediaMarkerX > 1 || mediaMarkerY < 0 || mediaMarkerY > 1) {
+            throw new SocialRavenException(
+                    "Media annotation coordinates must be between 0 and 1",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        boolean mediaFound = collection.getMediaFiles() != null
+                && collection.getMediaFiles().stream()
+                .map(PostMediaEntity::getId)
+                .anyMatch(id -> id != null && id.equals(mediaId));
+        if (!mediaFound) {
+            throw new SocialRavenException(
+                    "Media annotations must target an existing collection asset",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        clearCaptionAnnotation(thread);
+        thread.setMediaId(mediaId);
+        thread.setMediaMarkerX(mediaMarkerX);
+        thread.setMediaMarkerY(mediaMarkerY);
+    }
+
+    private void clearCaptionAnnotation(PostCollaborationThreadEntity thread) {
+        thread.setAnchorStart(null);
+        thread.setAnchorEnd(null);
+        thread.setAnchorText(null);
+    }
+
+    private void clearMediaAnnotation(PostCollaborationThreadEntity thread) {
+        thread.setMediaId(null);
+        thread.setMediaMarkerX(null);
+        thread.setMediaMarkerY(null);
     }
 
     private String applySuggestionToDescription(String currentDescription, PostCollaborationThreadEntity thread) {
@@ -522,6 +667,9 @@ public class PostCollaborationService {
                 thread.getAnchorStart(),
                 thread.getAnchorEnd(),
                 thread.getAnchorText(),
+                thread.getMediaId(),
+                thread.getMediaMarkerX(),
+                thread.getMediaMarkerY(),
                 thread.getSuggestedText(),
                 thread.getSuggestionStatus() != null ? thread.getSuggestionStatus().name() : null,
                 thread.getSuggestionDecidedBy(),

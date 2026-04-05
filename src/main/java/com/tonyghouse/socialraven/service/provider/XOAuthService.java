@@ -4,9 +4,12 @@ package com.tonyghouse.socialraven.service.provider;
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceClientConnectionSessionEntity;
 import com.tonyghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +54,9 @@ public class XOAuthService {
     @Autowired
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
+    @Autowired
+    private OAuthConnectionPersistenceService oauthConnectionPersistenceService;
+
     // OAuth 1.0a URLs
     private static final String REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token";
     private static final String ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token";
@@ -62,56 +68,79 @@ public class XOAuthService {
      */
     public void handleCallback(XOAuthCallbackRequest req) {
         log.info("X OAuth 1.0a callback for user: {}", req.getScreenName());
-
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        persistVerifiedConnection(
+                req.getAccessToken(),
+                req.getAccessTokenSecret(),
+                userId,
+                WorkspaceContext.getWorkspaceId(),
+                null,
+                null,
+                null
+        );
+    }
 
-        // Verify the tokens by making an API call
+    public PersistedConnection completeClientConnection(String accessToken,
+                                                        String accessTokenSecret,
+                                                        WorkspaceClientConnectionSessionEntity session,
+                                                        String ownerDisplayName,
+                                                        String ownerEmail) {
+        return persistVerifiedConnection(
+                accessToken,
+                accessTokenSecret,
+                session.getCreatedByUserId(),
+                session.getWorkspaceId(),
+                session.getId(),
+                ownerDisplayName,
+                ownerEmail
+        );
+    }
+
+    private PersistedConnection persistVerifiedConnection(String accessToken,
+                                                          String accessTokenSecret,
+                                                          String managingUserId,
+                                                          String workspaceId,
+                                                          String sessionId,
+                                                          String ownerDisplayName,
+                                                          String ownerEmail) {
         try {
-            Map<String, Object> userInfo = verifyCredentials(req.getAccessToken(), req.getAccessTokenSecret());
+            Map<String, Object> userInfo = verifyCredentials(accessToken, accessTokenSecret);
 
             String providerUserId = userInfo.get("id_str").toString();
             String screenName = (String) userInfo.get("screen_name");
-
-            // OAuth 1.0a tokens don't expire, so set a far future date
             OffsetDateTime expiresAtUtc = OffsetDateTime.now(ZoneOffset.UTC).plusYears(100);
-            long expiresAtMillis = expiresAtUtc.toInstant().toEpochMilli();
 
-            // Check if user already connected this X account
-            OAuthInfoEntity existingAuthInfo = oAuthInfoRepo.findByUserIdAndProviderAndProviderUserId(
-                    userId, Provider.X, providerUserId
-            );
+            AdditionalOAuthInfo additionalInfo = new AdditionalOAuthInfo();
+            additionalInfo.setXTokenSecret(accessTokenSecret);
 
-            OAuthInfoEntity info;
-            if (existingAuthInfo != null) {
-                log.info("Updating existing X OAuth connection for user: {}", screenName);
-                info = existingAuthInfo;
+            PersistedConnection saved;
+            if (sessionId != null) {
+                saved = oauthConnectionPersistenceService.saveClientConnection(
+                        workspaceId,
+                        managingUserId,
+                        sessionId,
+                        ownerDisplayName,
+                        ownerEmail,
+                        Provider.X,
+                        providerUserId,
+                        accessToken,
+                        expiresAtUtc,
+                        additionalInfo
+                );
             } else {
-                log.info("Creating new X OAuth connection for user: {}", screenName);
-                info = new OAuthInfoEntity();
-                info.setProvider(Provider.X);
-                info.setProviderUserId(providerUserId);
-                info.setUserId(userId);
-                info.setWorkspaceId(WorkspaceContext.getWorkspaceId());
+                saved = oauthConnectionPersistenceService.saveWorkspaceMemberConnection(
+                        workspaceId,
+                        managingUserId,
+                        Provider.X,
+                        providerUserId,
+                        accessToken,
+                        expiresAtUtc,
+                        additionalInfo
+                );
             }
-
-            // Update token info
-            info.setAccessToken(req.getAccessToken());
-            info.setExpiresAt(expiresAtMillis);
-            info.setExpiresAtUtc(expiresAtUtc);
-
-            // Store token secret in additionalInfo (REQUIRED for non-null constraint)
-            AdditionalOAuthInfo additionalInfo = info.getAdditionalInfo();
-            if (additionalInfo == null) {
-                additionalInfo = new AdditionalOAuthInfo();
-                info.setAdditionalInfo(additionalInfo); // Set it immediately to avoid null
-            }
-            additionalInfo.setXTokenSecret(req.getAccessTokenSecret());
-
-            oAuthInfoRepo.save(info);
-            redisTokenExpirySaver.saveTokenExpiry(info);
 
             log.info("Successfully saved X OAuth 1.0a tokens for @{}", screenName);
-
+            return saved;
         } catch (Exception e) {
             log.error("Failed to verify X credentials: {}", e.getMessage(), e);
             throw new RuntimeException("Invalid X OAuth tokens: " + e.getMessage(), e);

@@ -2,9 +2,12 @@ package com.tonyghouse.socialraven.service.provider;
 
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceClientConnectionSessionEntity;
 import com.tonyghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 
@@ -39,6 +42,33 @@ public class YouTubeOAuthService {
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void exchangeCodeForTokens(String code) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        exchangeCodeForTokens(code, WorkspaceContext.getWorkspaceId(), userId, null, null, null);
+    }
+
+    @Autowired
+    private OAuthConnectionPersistenceService oauthConnectionPersistenceService;
+
+    public PersistedConnection exchangeCodeForClientConnection(String code,
+                                                               WorkspaceClientConnectionSessionEntity session,
+                                                               String ownerDisplayName,
+                                                               String ownerEmail) {
+        return exchangeCodeForTokens(
+                code,
+                session.getWorkspaceId(),
+                session.getCreatedByUserId(),
+                session.getId(),
+                ownerDisplayName,
+                ownerEmail
+        );
+    }
+
+    private PersistedConnection exchangeCodeForTokens(String code,
+                                                      String workspaceId,
+                                                      String managingUserId,
+                                                      String sessionId,
+                                                      String ownerDisplayName,
+                                                      String ownerEmail) {
         RestTemplate rest = new RestTemplate();
 
         // STEP 1: Exchange authorization code for tokens
@@ -60,31 +90,33 @@ public class YouTubeOAuthService {
         // STEP 2: Fetch YouTube Provider User ID (CHANNEL ID)
         String providerUserId = fetchYoutubeChannelId(accessToken);
 
-        // STEP 3: Save in DB
-        OAuthInfoEntity oauthInfoEntity = new OAuthInfoEntity();
-        oauthInfoEntity.setProvider(Provider.YOUTUBE);
-        oauthInfoEntity.setProviderUserId(providerUserId);
-        oauthInfoEntity.setAccessToken(accessToken);
         long expiresAtMillis = System.currentTimeMillis() + (expiresIn * 1000L);
-        oauthInfoEntity.setExpiresAt(expiresAtMillis);
-        oauthInfoEntity.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAtMillis));
-
-        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        oauthInfoEntity.setUserId(userId);
-        oauthInfoEntity.setWorkspaceId(WorkspaceContext.getWorkspaceId());
-
         AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
         additionalOAuthInfo.setYoutubeRefreshToken(refreshToken);
-        oauthInfoEntity.setAdditionalInfo(additionalOAuthInfo);
-
-        OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.YOUTUBE, oauthInfoEntity.getProviderUserId());
-        if (existingAuthInfo != null) {
-            oauthInfoEntity.setId(existingAuthInfo.getId());
+        if (sessionId != null) {
+            return oauthConnectionPersistenceService.saveClientConnection(
+                    workspaceId,
+                    managingUserId,
+                    sessionId,
+                    ownerDisplayName,
+                    ownerEmail,
+                    Provider.YOUTUBE,
+                    providerUserId,
+                    accessToken,
+                    TimeUtil.toUTCOffsetDateTime(expiresAtMillis),
+                    additionalOAuthInfo
+            );
         }
 
-
-        repo.save(oauthInfoEntity);
-        redisTokenExpirySaver.saveTokenExpiry(oauthInfoEntity);
+        return oauthConnectionPersistenceService.saveWorkspaceMemberConnection(
+                workspaceId,
+                managingUserId,
+                Provider.YOUTUBE,
+                providerUserId,
+                accessToken,
+                TimeUtil.toUTCOffsetDateTime(expiresAtMillis),
+                additionalOAuthInfo
+        );
     }
 
     // =====================
@@ -177,4 +209,3 @@ public class YouTubeOAuthService {
 
 
 }
-

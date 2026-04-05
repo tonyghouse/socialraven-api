@@ -1,6 +1,7 @@
 package com.tonyghouse.socialraven.service.reporting;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -21,6 +22,7 @@ import com.tonyghouse.socialraven.entity.CompanyEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceClientReportLinkEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceClientReportScheduleEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
+import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.repo.CompanyRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceClientReportLinkRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceClientReportScheduleRepo;
@@ -197,6 +199,49 @@ class ClientReportServiceTest {
         assertThat(response.getTemplateType()).isEqualTo("ENGAGEMENT_SPOTLIGHT");
         assertThat(response.getNextSendAt()).isAfter(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1));
         assertThat(response.isActive()).isTrue();
+    }
+
+    @Test
+    void createLinkRejectsExpiryBeyondThirtyOneDays() {
+        WorkspaceClientReportLinkRepo linkRepo = mock(WorkspaceClientReportLinkRepo.class);
+        WorkspaceClientReportScheduleRepo scheduleRepo = mock(WorkspaceClientReportScheduleRepo.class);
+        WorkspaceCapabilityService capabilityService = mock(WorkspaceCapabilityService.class);
+        AnalyticsApiService analyticsApiService = mock(AnalyticsApiService.class);
+        WorkspaceRepo workspaceRepo = mock(WorkspaceRepo.class);
+        CompanyRepo companyRepo = mock(CompanyRepo.class);
+
+        ClientReportService service = createService(
+                linkRepo,
+                scheduleRepo,
+                capabilityService,
+                createTokenService(),
+                analyticsApiService,
+                workspaceRepo,
+                companyRepo,
+                mock(StorageService.class),
+                mock(EmailService.class)
+        );
+
+        WorkspaceContext.set("workspace_1", WorkspaceRole.ADMIN);
+
+        WorkspaceEntity workspace = workspace("workspace_1", "company_1", "Orbit Foods");
+        CompanyEntity company = company("company_1", "Northshore Agency");
+
+        when(capabilityService.hasCapability(
+                "workspace_1",
+                "user_1",
+                WorkspaceRole.ADMIN,
+                WorkspaceCapability.EXPORT_CLIENT_REPORTS
+        )).thenReturn(true);
+        when(workspaceRepo.findByIdAndDeletedAtIsNull("workspace_1")).thenReturn(Optional.of(workspace));
+        when(companyRepo.findById("company_1")).thenReturn(Optional.of(company));
+
+        CreateClientReportLinkRequest request = new CreateClientReportLinkRequest();
+        request.setExpiresAt(OffsetDateTime.now(ZoneOffset.UTC).plusDays(32));
+
+        assertThatThrownBy(() -> service.createLink("user_1", request))
+                .isInstanceOf(SocialRavenException.class)
+                .hasMessage("expiresAt cannot be more than 31 days in the future");
     }
 
     @Test

@@ -2,9 +2,12 @@ package com.tonyghouse.socialraven.service.provider;
 
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceClientConnectionSessionEntity;
 import com.tonyghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.util.TimeUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import org.slf4j.Logger;
@@ -41,7 +44,33 @@ public class FacebookOAuthService {
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void handleCallback(String code, String userId) {
-        log.info("Starting Facebook OAuth callback for userId: {}", userId);
+        handleCallback(code, userId, WorkspaceContext.getWorkspaceId(), null, null, null);
+    }
+
+    @Autowired
+    private OAuthConnectionPersistenceService oauthConnectionPersistenceService;
+
+    public PersistedConnection exchangeCodeForClientConnection(String code,
+                                                               WorkspaceClientConnectionSessionEntity session,
+                                                               String ownerDisplayName,
+                                                               String ownerEmail) {
+        return handleCallback(
+                code,
+                session.getCreatedByUserId(),
+                session.getWorkspaceId(),
+                session.getId(),
+                ownerDisplayName,
+                ownerEmail
+        );
+    }
+
+    private PersistedConnection handleCallback(String code,
+                                               String managingUserId,
+                                               String workspaceId,
+                                               String sessionId,
+                                               String ownerDisplayName,
+                                               String ownerEmail) {
+        log.info("Starting Facebook OAuth callback for userId: {}", managingUserId);
         log.debug("Received code: {}", code);
 
         try {
@@ -68,37 +97,36 @@ public class FacebookOAuthService {
             List<Map<String, Object>> pages = fetchFacebookPages(longAccessToken);
             log.info("Found {} Facebook Pages", pages != null ? pages.size() : 0);
 
-            // STEP 5: Upsert — update if already connected, otherwise insert
-            log.info("Step 5: Checking if Facebook account already connected");
-            OAuthInfoEntity oAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
-                userId, Provider.FACEBOOK, fbUserId
-            );
-            if (oAuthInfo == null) {
-                oAuthInfo = new OAuthInfoEntity();
-                oAuthInfo.setProvider(Provider.FACEBOOK);
-                oAuthInfo.setUserId(userId);
-                oAuthInfo.setProviderUserId(fbUserId);
-                oAuthInfo.setWorkspaceId(WorkspaceContext.getWorkspaceId());
-                log.info("Creating new Facebook OAuth record for user: {}", userId);
-            } else {
-                log.info("Updating existing Facebook OAuth record for user: {}", userId);
-            }
-
-            // STEP 6: Save everything
-            log.info("Step 6: Saving OAuth info to database");
-            oAuthInfo.setAccessToken(longAccessToken);
             long expiresAt = System.currentTimeMillis() + expiresIn * 1000L;
-            oAuthInfo.setExpiresAt(expiresAt);
-            oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAt));
-
-            if (oAuthInfo.getAdditionalInfo() == null) {
-                oAuthInfo.setAdditionalInfo(new AdditionalOAuthInfo());
+            AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
+            PersistedConnection saved;
+            if (sessionId != null) {
+                saved = oauthConnectionPersistenceService.saveClientConnection(
+                        workspaceId,
+                        managingUserId,
+                        sessionId,
+                        ownerDisplayName,
+                        ownerEmail,
+                        Provider.FACEBOOK,
+                        fbUserId,
+                        longAccessToken,
+                        TimeUtil.toUTCOffsetDateTime(expiresAt),
+                        additionalOAuthInfo
+                );
+            } else {
+                saved = oauthConnectionPersistenceService.saveWorkspaceMemberConnection(
+                        workspaceId,
+                        managingUserId,
+                        Provider.FACEBOOK,
+                        fbUserId,
+                        longAccessToken,
+                        TimeUtil.toUTCOffsetDateTime(expiresAt),
+                        additionalOAuthInfo
+                );
             }
 
-            repo.save(oAuthInfo);
-            redisTokenExpirySaver.saveTokenExpiry(oAuthInfo);
-
-            log.info("Facebook OAuth successfully completed for user: {}, Facebook ID: {}", userId, fbUserId);
+            log.info("Facebook OAuth successfully completed for user: {}, Facebook ID: {}", managingUserId, fbUserId);
+            return saved;
 
         } catch (Exception e) {
             log.error("Error during Facebook OAuth callback: {}", e.getMessage(), e);

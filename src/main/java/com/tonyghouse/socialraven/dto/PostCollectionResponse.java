@@ -18,6 +18,8 @@ public class PostCollectionResponse {
     private String postCollectionType;
     private String overallStatus;
     private String reviewStatus;
+    private String approvalModeOverride;
+    private String effectiveApprovalMode;
     private OffsetDateTime reviewSubmittedAt;
     private OffsetDateTime approvedAt;
     private boolean approvalLocked;
@@ -34,6 +36,7 @@ public class PostCollectionResponse {
     private OffsetDateTime approvalEscalatedAt;
     private List<PostCollectionVersionResponse> versionHistory;
     private PostCollectionApprovalDiffResponse approvedDiff;
+    private List<PostCollectionActivityTimelineEntryResponse> activityTimeline;
     /** Platform-specific configuration, e.g. YouTube title, Instagram alt text. */
     private Map<String, Object> platformConfigs;
     private String failureState;

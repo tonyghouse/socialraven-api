@@ -22,8 +22,11 @@ public class WorkspaceResponse {
     private String logoS3Key;
     private WorkspaceRole role;
     private WorkspaceApprovalMode approvalMode;
+    private boolean autoScheduleAfterApproval;
     private boolean ownerFinalApprovalRequired;
     private List<String> approverUserIds;
+    private List<String> publisherUserIds;
+    private List<WorkspaceApprovalRuleResponse> approvalRules;
     private List<WorkspaceCapability> capabilities;
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

@@ -18,7 +18,10 @@ import com.tonyghouse.socialraven.repo.WorkspaceMemberRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceUserCapabilityRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -65,6 +68,17 @@ public class AgencyOpsService {
 
     @Transactional(readOnly = true)
     public AgencyOpsResponse getAgencyOps(String userId) {
+        return getAgencyOps(userId, null, null, null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public AgencyOpsResponse getAgencyOps(String userId,
+                                          String workspaceId,
+                                          String approverUserId,
+                                          String attentionStatusFilter,
+                                          String dueWindow,
+                                          String timeZone) {
+        AgencyOpsFilter filter = normalizeFilter(workspaceId, approverUserId, attentionStatusFilter, dueWindow, timeZone);
         Map<String, WorkspaceRole> roleByWorkspaceId = loadUserWorkspaceRoles(userId);
         if (roleByWorkspaceId.isEmpty()) {
             throw new SocialRavenException("Approval workflow access is required", HttpStatus.FORBIDDEN);
@@ -126,7 +140,7 @@ public class AgencyOpsService {
         Map<String, Set<String>> workspaceIdsByApproverUserId = invertApproverAssignments(approverUserIdsByWorkspaceId);
         Map<String, ProfileSnapshot> profilesByUserId = resolveProfiles(workspaceIdsByApproverUserId.keySet());
 
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         List<PostCollectionEntity> reviewCollections = postCollectionRepo.findAgencyOpsReviewCollections(
                 workspaceIds,
                 List.of(PostReviewStatus.IN_REVIEW, PostReviewStatus.CHANGES_REQUESTED)
@@ -151,50 +165,64 @@ public class AgencyOpsService {
             }
 
             WorkspaceHealthAccumulator health = workspaceHealth.get(scope.workspaceId());
+            Set<String> eligibleApproverUserIds = approverUserIdsByWorkspaceId.getOrDefault(scope.workspaceId(), Set.of());
+            Set<String> scopedApproverUserIds = scopedApproverUserIds(eligibleApproverUserIds, filter);
             if (collection.getReviewStatus() == PostReviewStatus.IN_REVIEW) {
                 String attentionStatus = resolveAttentionStatus(collection, now);
-                AgencyOpsResponse.QueueItem queueItem = toQueueItem(
-                        collection,
-                        scope,
-                        approverUserIdsByWorkspaceId.getOrDefault(scope.workspaceId(), Set.of()),
-                        attentionStatus
-                );
-                queue.add(queueItem);
-                health.pendingApprovalCount++;
+                boolean matchesQueueFilters = matchesScopedFilters(
+                        scope.workspaceId(),
+                        scopedApproverUserIds,
+                        collection.getScheduledTime(),
+                        filter,
+                        now
+                ) && matchesAttentionStatus(attentionStatus, filter);
 
-                if ("ESCALATED".equals(attentionStatus)) {
-                    overdueQueue.add(queueItem);
-                    health.escalatedApprovalCount++;
-                } else if ("OVERDUE".equals(attentionStatus)) {
-                    overdueQueue.add(queueItem);
-                    health.overdueApprovalCount++;
+                if (matchesQueueFilters) {
+                    AgencyOpsResponse.QueueItem queueItem = toQueueItem(
+                            collection,
+                            scope,
+                            eligibleApproverUserIds,
+                            attentionStatus
+                    );
+                    queue.add(queueItem);
+                    health.pendingApprovalCount++;
+
+                    if ("ESCALATED".equals(attentionStatus)) {
+                        overdueQueue.add(queueItem);
+                        health.escalatedApprovalCount++;
+                    } else if ("OVERDUE".equals(attentionStatus)) {
+                        overdueQueue.add(queueItem);
+                        health.overdueApprovalCount++;
+                    }
+
+                    assignWorkload(
+                            workloadByUserId,
+                            scopedApproverUserIds,
+                            workspaceIdsByApproverUserId,
+                            profilesByUserId,
+                            collection,
+                            attentionStatus
+                    );
                 }
 
-                assignWorkload(
-                        workloadByUserId,
-                        approverUserIdsByWorkspaceId.getOrDefault(scope.workspaceId(), Set.of()),
-                        workspaceIdsByApproverUserId,
-                        profilesByUserId,
-                        collection,
-                        attentionStatus
-                );
-
-                if (isApprovalRisk(collection, now) && riskCollectionIds.add(collection.getId())) {
+                if (matchesQueueFilters && isApprovalRisk(collection, now) && riskCollectionIds.add(collection.getId())) {
                     publishRisk.add(toApprovalRiskItem(
                             collection,
                             scope,
                             attentionStatus,
-                            approverUserIdsByWorkspaceId.getOrDefault(scope.workspaceId(), Set.of()),
+                            eligibleApproverUserIds,
                             now
                     ));
                 }
-            } else if (collection.getReviewStatus() == PostReviewStatus.CHANGES_REQUESTED) {
+            } else if (collection.getReviewStatus() == PostReviewStatus.CHANGES_REQUESTED
+                    && matchesScopedFilters(scope.workspaceId(), scopedApproverUserIds, collection.getScheduledTime(), filter, now)
+                    && allowsNonQueueAttentionItems(filter)) {
                 health.changesRequestedCount++;
                 if (isApprovalRisk(collection, now) && riskCollectionIds.add(collection.getId())) {
                     publishRisk.add(toChangesRequestedRiskItem(
                             collection,
                             scope,
-                            approverUserIdsByWorkspaceId.getOrDefault(scope.workspaceId(), Set.of()),
+                            eligibleApproverUserIds,
                             now
                     ));
                 }
@@ -203,7 +231,12 @@ public class AgencyOpsService {
 
         for (PostCollectionEntity collection : scheduledCollections) {
             WorkspaceScope scope = scopesByWorkspaceId.get(collection.getWorkspaceId());
-            if (scope == null || !isScheduledRisk(collection) || !riskCollectionIds.add(collection.getId())) {
+            if (scope == null || !isScheduledRisk(collection)) {
+                continue;
+            }
+            if (!matchesScopedFilters(scope.workspaceId(), Set.of(), collection.getScheduledTime(), filter, now)
+                    || !allowsNonQueueAttentionItems(filter)
+                    || !riskCollectionIds.add(collection.getId())) {
                 continue;
             }
             publishRisk.add(toScheduledRiskItem(collection, scope));
@@ -235,19 +268,14 @@ public class AgencyOpsService {
 
         List<AgencyOpsResponse.WorkspaceHealth> workspaceHealthResponses = workspaceHealth.values().stream()
                 .map(WorkspaceHealthAccumulator::toResponse)
+                .filter(item -> filter.workspaceId() == null || filter.workspaceId().equals(item.getWorkspaceId()))
+                .filter(item -> shouldIncludeWorkspaceHealth(item, filter))
                 .sorted(Comparator
                         .comparingInt((AgencyOpsResponse.WorkspaceHealth item) -> healthRank(item.getHealthStatus()))
                         .thenComparing(item -> safeLower(item.getWorkspaceName())))
                 .toList();
 
-        List<AgencyOpsResponse.ApproverOption> approvers = workload.stream()
-                .map(item -> new AgencyOpsResponse.ApproverOption(
-                        item.getUserId(),
-                        item.getDisplayName(),
-                        item.getEmail(),
-                        item.getWorkspaceCount()
-                ))
-                .toList();
+        List<AgencyOpsResponse.ApproverOption> approvers = buildApproverOptions(workspaceIdsByApproverUserId, profilesByUserId);
 
         List<AgencyOpsResponse.WorkspaceOption> workspaces = scopesByWorkspaceId.values().stream()
                 .map(scope -> new AgencyOpsResponse.WorkspaceOption(
@@ -263,7 +291,7 @@ public class AgencyOpsService {
                 (int) queue.stream().filter(item -> "OVERDUE".equals(item.getAttentionStatus())).count(),
                 (int) queue.stream().filter(item -> "ESCALATED".equals(item.getAttentionStatus())).count(),
                 publishRisk.size(),
-                approvers.size()
+                workload.size()
         );
 
         return new AgencyOpsResponse(
@@ -288,6 +316,54 @@ public class AgencyOpsService {
             );
         }
         return roleByWorkspaceId;
+    }
+
+    private AgencyOpsFilter normalizeFilter(String workspaceId,
+                                            String approverUserId,
+                                            String attentionStatus,
+                                            String dueWindow,
+                                            String timeZone) {
+        String normalizedWorkspaceId = normalizeFilterValue(workspaceId);
+        String normalizedApproverUserId = normalizeFilterValue(approverUserId);
+        String normalizedAttentionStatus = normalizeEnumFilterValue(attentionStatus, Set.of("PENDING", "OVERDUE", "ESCALATED"), "status");
+        String normalizedDueWindow = normalizeEnumFilterValue(dueWindow, Set.of("TODAY", "NEXT_24_HOURS", "NEXT_7_DAYS", "OVERDUE"), "dueWindow");
+
+        ZoneId zoneId = ZoneOffset.UTC;
+        String normalizedTimeZone = normalizeFilterValue(timeZone);
+        if (normalizedTimeZone != null) {
+            try {
+                zoneId = ZoneId.of(normalizedTimeZone);
+            } catch (Exception exception) {
+                throw new SocialRavenException("Unsupported timezone", HttpStatus.BAD_REQUEST);
+            }
+        }
+
+        return new AgencyOpsFilter(
+                normalizedWorkspaceId,
+                normalizedApproverUserId,
+                normalizedAttentionStatus,
+                normalizedDueWindow,
+                zoneId
+        );
+    }
+
+    private String normalizeFilterValue(String value) {
+        if (value == null || value.isBlank() || "ALL".equalsIgnoreCase(value.trim())) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private String normalizeEnumFilterValue(String value, Set<String> allowedValues, String fieldName) {
+        String normalizedValue = normalizeFilterValue(value);
+        if (normalizedValue == null) {
+            return null;
+        }
+        String upperValue = normalizedValue.toUpperCase();
+        if (!allowedValues.contains(upperValue)) {
+            throw new SocialRavenException("Unsupported " + fieldName + " filter", HttpStatus.BAD_REQUEST);
+        }
+        return upperValue;
     }
 
     private Map<String, WorkspaceHealthAccumulator> initializeWorkspaceHealth(Collection<WorkspaceScope> scopes) {
@@ -352,6 +428,76 @@ public class AgencyOpsService {
             profiles.put(userId, new ProfileSnapshot(displayName, email));
         }
         return profiles;
+    }
+
+    private List<AgencyOpsResponse.ApproverOption> buildApproverOptions(Map<String, Set<String>> workspaceIdsByApproverUserId,
+                                                                        Map<String, ProfileSnapshot> profilesByUserId) {
+        return workspaceIdsByApproverUserId.entrySet().stream()
+                .map(entry -> {
+                    ProfileSnapshot profile = profilesByUserId.getOrDefault(entry.getKey(), new ProfileSnapshot(entry.getKey(), null));
+                    return new AgencyOpsResponse.ApproverOption(
+                            entry.getKey(),
+                            profile.displayName(),
+                            profile.email(),
+                            entry.getValue().size()
+                    );
+                })
+                .sorted(Comparator.comparing(item -> safeLower(item.getDisplayName())))
+                .toList();
+    }
+
+    private Set<String> scopedApproverUserIds(Set<String> eligibleApproverUserIds, AgencyOpsFilter filter) {
+        if (filter.approverUserId() == null) {
+            return eligibleApproverUserIds;
+        }
+        if (!eligibleApproverUserIds.contains(filter.approverUserId())) {
+            return Set.of();
+        }
+        return Set.of(filter.approverUserId());
+    }
+
+    private boolean matchesScopedFilters(String workspaceId,
+                                         Set<String> scopedApproverUserIds,
+                                         OffsetDateTime scheduledTime,
+                                         AgencyOpsFilter filter,
+                                         OffsetDateTime now) {
+        if (filter.workspaceId() != null && !filter.workspaceId().equals(workspaceId)) {
+            return false;
+        }
+        if (filter.approverUserId() != null && scopedApproverUserIds.isEmpty()) {
+            return false;
+        }
+        return matchesDueWindow(scheduledTime, filter, now);
+    }
+
+    private boolean matchesAttentionStatus(String attentionStatus, AgencyOpsFilter filter) {
+        return filter.attentionStatus() == null || filter.attentionStatus().equals(attentionStatus);
+    }
+
+    private boolean allowsNonQueueAttentionItems(AgencyOpsFilter filter) {
+        return filter.attentionStatus() == null;
+    }
+
+    private boolean matchesDueWindow(OffsetDateTime scheduledTime,
+                                     AgencyOpsFilter filter,
+                                     OffsetDateTime now) {
+        if (filter.dueWindow() == null) {
+            return true;
+        }
+        if (scheduledTime == null) {
+            return false;
+        }
+        return switch (filter.dueWindow()) {
+            case "OVERDUE" -> scheduledTime.isBefore(now);
+            case "TODAY" -> {
+                LocalDate scheduledDate = scheduledTime.atZoneSameInstant(filter.timeZone()).toLocalDate();
+                LocalDate currentDate = now.atZoneSameInstant(filter.timeZone()).toLocalDate();
+                yield scheduledDate.isEqual(currentDate);
+            }
+            case "NEXT_24_HOURS" -> !scheduledTime.isBefore(now) && !scheduledTime.isAfter(now.plusHours(24));
+            case "NEXT_7_DAYS" -> !scheduledTime.isBefore(now) && !scheduledTime.isAfter(now.plusDays(7));
+            default -> false;
+        };
     }
 
     private void assignWorkload(Map<String, WorkloadAccumulator> workloadByUserId,
@@ -537,6 +683,28 @@ public class AgencyOpsService {
         return "STABLE";
     }
 
+    private boolean shouldIncludeWorkspaceHealth(AgencyOpsResponse.WorkspaceHealth item,
+                                                 AgencyOpsFilter filter) {
+        if (!hasActiveFilters(filter)) {
+            return true;
+        }
+        if (filter.workspaceId() != null && filter.workspaceId().equals(item.getWorkspaceId())) {
+            return true;
+        }
+        return item.getPendingApprovalCount() > 0
+                || item.getOverdueApprovalCount() > 0
+                || item.getEscalatedApprovalCount() > 0
+                || item.getChangesRequestedCount() > 0
+                || item.getAtRiskPublishCount() > 0;
+    }
+
+    private boolean hasActiveFilters(AgencyOpsFilter filter) {
+        return filter.workspaceId() != null
+                || filter.approverUserId() != null
+                || filter.attentionStatus() != null
+                || filter.dueWindow() != null;
+    }
+
     private String riskSeverity(OffsetDateTime scheduledTime, OffsetDateTime now, boolean escalated) {
         if (escalated || scheduledTime == null) {
             return "HIGH";
@@ -616,6 +784,13 @@ public class AgencyOpsService {
     }
 
     private record ProfileSnapshot(String displayName, String email) {
+    }
+
+    private record AgencyOpsFilter(String workspaceId,
+                                   String approverUserId,
+                                   String attentionStatus,
+                                   String dueWindow,
+                                   ZoneId timeZone) {
     }
 
     private static final class WorkloadAccumulator {

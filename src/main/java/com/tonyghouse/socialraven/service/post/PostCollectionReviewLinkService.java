@@ -1,7 +1,10 @@
 package com.tonyghouse.socialraven.service.post;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tonyghouse.socialraven.constant.PostApprovalStage;
+import com.tonyghouse.socialraven.constant.PostReviewLinkShareScope;
 import com.tonyghouse.socialraven.constant.PostReviewStatus;
 import com.tonyghouse.socialraven.constant.PostStatus;
 import com.tonyghouse.socialraven.constant.WorkspaceCapability;
@@ -29,22 +32,30 @@ import com.tonyghouse.socialraven.service.workspace.WorkspaceCapabilityService;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PostCollectionReviewLinkService {
 
+    private static final TypeReference<List<Long>> LONG_LIST_TYPE = new TypeReference<>() {};
     private static final Pattern REVIEWER_EMAIL_PATTERN =
             Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+    private static final int MIN_PASSCODE_LENGTH = 6;
+    private static final int MAX_PASSCODE_LENGTH = 64;
 
     @Autowired
     private PostCollectionRepo postCollectionRepo;
@@ -75,6 +86,8 @@ public class PostCollectionReviewLinkService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    private final PasswordEncoder reviewLinkPasscodeEncoder = new BCryptPasswordEncoder();
 
     @Transactional(readOnly = true)
     public List<PostCollectionReviewLinkResponse> getReviewLinks(String userId, Long collectionId) {
@@ -110,12 +123,17 @@ public class PostCollectionReviewLinkService {
         if (!expiresAt.isAfter(now)) {
             throw new SocialRavenException("expiresAt must be in the future", HttpStatus.BAD_REQUEST);
         }
+        ShareTarget shareTarget = resolveShareTarget(collection, request);
+        String passcode = normalizeOptionalPasscode(request != null ? request.getPasscode() : null);
 
         PostCollectionReviewLinkEntity link = new PostCollectionReviewLinkEntity();
         link.setId(UUID.randomUUID().toString());
         link.setPostCollectionId(collection.getId());
         link.setWorkspaceId(workspaceId);
         link.setCreatedByUserId(userId);
+        link.setShareScope(shareTarget.scope());
+        link.setSharedPostIds(writeSharedPostIds(shareTarget.sharedPostIds()));
+        link.setPasscodeHash(passcode != null ? reviewLinkPasscodeEncoder.encode(passcode) : null);
         link.setExpiresAt(expiresAt);
         link.setCreatedAt(now);
 
@@ -144,15 +162,18 @@ public class PostCollectionReviewLinkService {
         postCollectionReviewLinkRepo.save(link);
     }
 
-    @Transactional(readOnly = true)
-    public PublicPostCollectionReviewResponse getPublicReview(String token) {
-        ResolvedReviewLink resolved = resolveReviewLink(token);
+    @Transactional
+    public PublicPostCollectionReviewResponse getPublicReview(String token, String passcode) {
+        ResolvedReviewLink resolved = resolveReviewLink(token, passcode);
+        markLastAccessed(resolved.link());
         return buildPublicResponse(resolved);
     }
 
     @Transactional
-    public PostCollaborationThreadResponse addClientComment(String token, PublicReviewCommentRequest request) {
-        ResolvedReviewLink resolved = resolveReviewLink(token);
+    public PostCollaborationThreadResponse addClientComment(String token,
+                                                            String passcode,
+                                                            PublicReviewCommentRequest request) {
+        ResolvedReviewLink resolved = resolveReviewLink(token, passcode);
         assertLinkActive(resolved);
         if (!resolved.collection().isDraft()) {
             throw new SocialRavenException(
@@ -171,13 +192,21 @@ public class PostCollectionReviewLinkService {
                 resolved.collection().getWorkspaceId(),
                 identity.displayName(),
                 identity.email(),
-                request != null ? request.getBody() : null
+                request != null ? request.getBody() : null,
+                request != null ? request.getAnchorStart() : null,
+                request != null ? request.getAnchorEnd() : null,
+                request != null ? request.getAnchorText() : null,
+                request != null ? request.getMediaId() : null,
+                request != null ? request.getMediaMarkerX() : null,
+                request != null ? request.getMediaMarkerY() : null
         );
     }
 
     @Transactional
-    public PublicPostCollectionReviewResponse approveFromClient(String token, PublicReviewDecisionRequest request) {
-        ResolvedReviewLink resolved = resolveReviewLink(token);
+    public PublicPostCollectionReviewResponse approveFromClient(String token,
+                                                                String passcode,
+                                                                PublicReviewDecisionRequest request) {
+        ResolvedReviewLink resolved = resolveReviewLink(token, passcode);
         assertClientApprovalAllowed(resolved);
         ReviewerIdentity identity = requireReviewerIdentity(
                 request != null ? request.getReviewerName() : null,
@@ -194,8 +223,10 @@ public class PostCollectionReviewLinkService {
     }
 
     @Transactional
-    public PublicPostCollectionReviewResponse rejectFromClient(String token, PublicReviewDecisionRequest request) {
-        ResolvedReviewLink resolved = resolveReviewLink(token);
+    public PublicPostCollectionReviewResponse rejectFromClient(String token,
+                                                               String passcode,
+                                                               PublicReviewDecisionRequest request) {
+        ResolvedReviewLink resolved = resolveReviewLink(token, passcode);
         assertClientRejectionAllowed(resolved);
         ReviewerIdentity identity = requireReviewerIdentity(
                 request != null ? request.getReviewerName() : null,
@@ -239,6 +270,9 @@ public class PostCollectionReviewLinkService {
                 postReviewLinkTokenService.generateToken(entity.getId(), entity.getExpiresAt()),
                 entity.getCreatedByUserId(),
                 resolveDisplayName(entity.getCreatedByUserId()),
+                entity.getShareScope() != null ? entity.getShareScope().name() : PostReviewLinkShareScope.CAMPAIGN.name(),
+                readSharedPostIds(entity.getSharedPostIds()),
+                entity.getPasscodeHash() != null && !entity.getPasscodeHash().isBlank(),
                 entity.getExpiresAt(),
                 entity.getRevokedAt(),
                 entity.getCreatedAt(),
@@ -264,7 +298,7 @@ public class PostCollectionReviewLinkService {
         return userId;
     }
 
-    private ResolvedReviewLink resolveReviewLink(String token) {
+    private ResolvedReviewLink resolveReviewLink(String token, String passcode) {
         PostReviewLinkTokenService.ValidatedReviewLinkToken validatedToken = postReviewLinkTokenService.parseAndValidate(token);
         PostCollectionReviewLinkEntity link = postCollectionReviewLinkRepo.findById(validatedToken.reviewLinkId())
                 .orElseThrow(() -> new SocialRavenException("Review link not found", HttpStatus.NOT_FOUND));
@@ -278,6 +312,7 @@ public class PostCollectionReviewLinkService {
         if (!link.getWorkspaceId().equals(collection.getWorkspaceId())) {
             throw new SocialRavenException("Review link is invalid", HttpStatus.NOT_FOUND);
         }
+        assertPasscodeAuthorized(link, passcode);
 
         return new ResolvedReviewLink(link, collection, validatedToken.expiresAt());
     }
@@ -294,6 +329,12 @@ public class PostCollectionReviewLinkService {
 
     private void assertClientApprovalAllowed(ResolvedReviewLink resolved) {
         assertLinkActive(resolved);
+        if (resolved.link().getShareScope() == PostReviewLinkShareScope.SELECTED_POSTS) {
+            throw new SocialRavenException(
+                    "Selected-post review links are feedback-only. Use a full campaign link for approval.",
+                    HttpStatus.CONFLICT
+            );
+        }
         PostCollectionEntity collection = resolved.collection();
         PostReviewStatus reviewStatus = collection.getReviewStatus() != null
                 ? collection.getReviewStatus()
@@ -311,6 +352,12 @@ public class PostCollectionReviewLinkService {
 
     private void assertClientRejectionAllowed(ResolvedReviewLink resolved) {
         assertLinkActive(resolved);
+        if (resolved.link().getShareScope() == PostReviewLinkShareScope.SELECTED_POSTS) {
+            throw new SocialRavenException(
+                    "Selected-post review links are feedback-only. Use a full campaign link for approval decisions.",
+                    HttpStatus.CONFLICT
+            );
+        }
         PostCollectionEntity collection = resolved.collection();
         PostReviewStatus reviewStatus = collection.getReviewStatus() != null
                 ? collection.getReviewStatus()
@@ -337,9 +384,16 @@ public class PostCollectionReviewLinkService {
                 (left, right) -> left,
                 LinkedHashMap::new
         ));
+        List<PostEntity> sharedPosts = resolveSharedPosts(collection, resolved.link());
+        Set<String> sharedPlatforms = sharedPosts.stream()
+                .map(post -> post.getProvider() != null ? post.getProvider().name() : null)
+                .filter(platform -> platform != null && !platform.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> sharedPlatformKeys = sharedPlatforms.stream()
+                .flatMap(platform -> java.util.stream.Stream.of(platform, platform.toLowerCase()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        List<PublicReviewChannelResponse> channels = collection.getPosts() != null
-                ? collection.getPosts().stream()
+        List<PublicReviewChannelResponse> channels = sharedPosts.stream()
                 .map(post -> {
                     ConnectedAccount account = accountsByProviderUserId.get(post.getProviderUserId());
                     return new PublicReviewChannelResponse(
@@ -348,8 +402,7 @@ public class PostCollectionReviewLinkService {
                             account != null ? account.getProfilePicLink() : null
                     );
                 })
-                .toList()
-                : List.of();
+                .toList();
 
         List<MediaResponse> media = collection.getMediaFiles() != null
                 ? collection.getMediaFiles().stream()
@@ -360,7 +413,21 @@ public class PostCollectionReviewLinkService {
         Map<String, Object> platformConfigs = null;
         if (collection.getPlatformConfigs() != null && !collection.getPlatformConfigs().isBlank()) {
             try {
-                platformConfigs = objectMapper.readValue(collection.getPlatformConfigs(), Map.class);
+                Map<String, Object> allPlatformConfigs = objectMapper.readValue(collection.getPlatformConfigs(), Map.class);
+                if (allPlatformConfigs == null) {
+                    platformConfigs = null;
+                } else if (resolved.link().getShareScope() == PostReviewLinkShareScope.SELECTED_POSTS) {
+                    platformConfigs = allPlatformConfigs.entrySet().stream()
+                            .filter(entry -> sharedPlatformKeys.contains(entry.getKey()))
+                            .collect(Collectors.toMap(
+                                    Map.Entry::getKey,
+                                    Map.Entry::getValue,
+                                    (left, right) -> left,
+                                    LinkedHashMap::new
+                            ));
+                } else {
+                    platformConfigs = allPlatformConfigs;
+                }
             } catch (Exception ignored) {
                 platformConfigs = null;
             }
@@ -372,12 +439,15 @@ public class PostCollectionReviewLinkService {
         PostReviewStatus reviewStatus = collection.getReviewStatus() != null
                 ? collection.getReviewStatus()
                 : PostReviewStatus.DRAFT;
-        boolean canComment = activeLink && collection.isDraft();
+        boolean campaignScope = resolved.link().getShareScope() != PostReviewLinkShareScope.SELECTED_POSTS;
+        boolean canComment = activeLink && collection.isDraft() && reviewStatus != PostReviewStatus.APPROVED;
         boolean canApprove = activeLink
+                && campaignScope
                 && collection.isDraft()
                 && reviewStatus == PostReviewStatus.IN_REVIEW
                 && collection.getNextApprovalStage() != PostApprovalStage.OWNER_FINAL;
         boolean canReject = activeLink
+                && campaignScope
                 && collection.isDraft()
                 && reviewStatus == PostReviewStatus.IN_REVIEW;
 
@@ -394,6 +464,9 @@ public class PostCollectionReviewLinkService {
                 deriveOverallStatus(collection),
                 reviewStatus.name(),
                 collection.getNextApprovalStage() != null ? collection.getNextApprovalStage().name() : null,
+                resolved.link().getShareScope() != null
+                        ? resolved.link().getShareScope().name()
+                        : PostReviewLinkShareScope.CAMPAIGN.name(),
                 channels,
                 media,
                 platformConfigs,
@@ -464,7 +537,132 @@ public class PostCollectionReviewLinkService {
         return value.trim();
     }
 
+    private ShareTarget resolveShareTarget(PostCollectionEntity collection,
+                                           CreatePostCollectionReviewLinkRequest request) {
+        PostReviewLinkShareScope requestedScope = request != null && request.getShareScope() != null
+                ? request.getShareScope()
+                : PostReviewLinkShareScope.CAMPAIGN;
+        if (requestedScope == PostReviewLinkShareScope.CAMPAIGN) {
+            return new ShareTarget(PostReviewLinkShareScope.CAMPAIGN, List.of());
+        }
+
+        if (collection.getPosts() == null || collection.getPosts().isEmpty()) {
+            throw new SocialRavenException(
+                    "Selected-post sharing requires at least one campaign post",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        List<Long> requestedPostIds = request != null ? request.getSharedPostIds() : null;
+        if (requestedPostIds == null || requestedPostIds.isEmpty()) {
+            throw new SocialRavenException(
+                    "sharedPostIds is required when shareScope is SELECTED_POSTS",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        Set<Long> collectionPostIds = collection.getPosts().stream()
+                .map(PostEntity::getId)
+                .filter(id -> id != null)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<Long> normalized = new ArrayList<>();
+        Set<Long> seen = new LinkedHashSet<>();
+        for (Long postId : requestedPostIds) {
+            if (postId == null || !seen.add(postId)) {
+                continue;
+            }
+            if (!collectionPostIds.contains(postId)) {
+                throw new SocialRavenException(
+                        "All sharedPostIds must belong to this campaign",
+                        HttpStatus.BAD_REQUEST
+                );
+            }
+            normalized.add(postId);
+        }
+        if (normalized.isEmpty()) {
+            throw new SocialRavenException(
+                    "sharedPostIds is required when shareScope is SELECTED_POSTS",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        if (normalized.size() == collectionPostIds.size() && collectionPostIds.containsAll(normalized)) {
+            return new ShareTarget(PostReviewLinkShareScope.CAMPAIGN, List.of());
+        }
+        return new ShareTarget(PostReviewLinkShareScope.SELECTED_POSTS, normalized);
+    }
+
+    private List<PostEntity> resolveSharedPosts(PostCollectionEntity collection, PostCollectionReviewLinkEntity link) {
+        List<PostEntity> posts = collection.getPosts() != null ? collection.getPosts() : List.of();
+        if (link.getShareScope() != PostReviewLinkShareScope.SELECTED_POSTS) {
+            return posts;
+        }
+
+        Set<Long> sharedPostIds = new LinkedHashSet<>(readSharedPostIds(link.getSharedPostIds()));
+        if (sharedPostIds.isEmpty()) {
+            return posts;
+        }
+
+        return posts.stream()
+                .filter(post -> post.getId() != null && sharedPostIds.contains(post.getId()))
+                .toList();
+    }
+
+    private List<Long> readSharedPostIds(String sharedPostIdsJson) {
+        if (sharedPostIdsJson == null || sharedPostIdsJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<Long> sharedPostIds = objectMapper.readValue(sharedPostIdsJson, LONG_LIST_TYPE);
+            return sharedPostIds != null ? sharedPostIds : List.of();
+        } catch (JsonProcessingException ignored) {
+            return List.of();
+        }
+    }
+
+    private String writeSharedPostIds(List<Long> sharedPostIds) {
+        try {
+            return objectMapper.writeValueAsString(sharedPostIds != null ? sharedPostIds : List.of());
+        } catch (JsonProcessingException ex) {
+            throw new SocialRavenException("Failed to store shared post ids", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private String normalizeOptionalPasscode(String passcode) {
+        if (passcode == null) {
+            return null;
+        }
+        String normalized = passcode.trim();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        if (normalized.length() < MIN_PASSCODE_LENGTH || normalized.length() > MAX_PASSCODE_LENGTH) {
+            throw new SocialRavenException(
+                    "Review link passcodes must be between 6 and 64 characters",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+        return normalized;
+    }
+
+    private void assertPasscodeAuthorized(PostCollectionReviewLinkEntity link, String providedPasscode) {
+        if (link.getPasscodeHash() == null || link.getPasscodeHash().isBlank()) {
+            return;
+        }
+
+        String normalizedPasscode = normalizeOptionalPasscode(providedPasscode);
+        if (normalizedPasscode == null) {
+            throw new SocialRavenException("This review link requires a passcode", HttpStatus.FORBIDDEN);
+        }
+        if (!reviewLinkPasscodeEncoder.matches(normalizedPasscode, link.getPasscodeHash())) {
+            throw new SocialRavenException("Incorrect review link passcode", HttpStatus.FORBIDDEN);
+        }
+    }
+
     private record ReviewerIdentity(String displayName, String email) {
+    }
+
+    private record ShareTarget(PostReviewLinkShareScope scope, List<Long> sharedPostIds) {
     }
 
     private record ResolvedReviewLink(PostCollectionReviewLinkEntity link,

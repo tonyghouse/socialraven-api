@@ -2,9 +2,12 @@ package com.tonyghouse.socialraven.service.provider;
 
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceClientConnectionSessionEntity;
 import com.tonyghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.util.TimeUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 import org.slf4j.Logger;
@@ -48,7 +51,33 @@ public class InstagramOAuthService {
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
     public void handleCallback(String code, String userId) {
-        log.info("Starting Instagram OAuth callback for userId: {}", userId);
+        handleCallback(code, userId, WorkspaceContext.getWorkspaceId(), null, null, null);
+    }
+
+    @Autowired
+    private OAuthConnectionPersistenceService oauthConnectionPersistenceService;
+
+    public PersistedConnection exchangeCodeForClientConnection(String code,
+                                                               WorkspaceClientConnectionSessionEntity session,
+                                                               String ownerDisplayName,
+                                                               String ownerEmail) {
+        return handleCallback(
+                code,
+                session.getCreatedByUserId(),
+                session.getWorkspaceId(),
+                session.getId(),
+                ownerDisplayName,
+                ownerEmail
+        );
+    }
+
+    private PersistedConnection handleCallback(String code,
+                                               String managingUserId,
+                                               String workspaceId,
+                                               String sessionId,
+                                               String ownerDisplayName,
+                                               String ownerEmail) {
+        log.info("Starting Instagram OAuth callback for userId: {}", managingUserId);
 
         // STEP 1: Exchange code → access token
         // The new Instagram Platform API (IGAA tokens) returns a long-lived token (60 days)
@@ -63,34 +92,36 @@ public class InstagramOAuthService {
         // is only for EAA/IGQVJ token formats.
         long expiresIn = 60L * 24 * 60 * 60; // 60 days in seconds
 
-        // STEP 2: Upsert — update if already connected, otherwise insert
-        OAuthInfoEntity oAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(
-                userId, Provider.INSTAGRAM, instagramUserId
-        );
-        if (oAuthInfo == null) {
-            oAuthInfo = new OAuthInfoEntity();
-            oAuthInfo.setProvider(Provider.INSTAGRAM);
-            oAuthInfo.setUserId(userId);
-            oAuthInfo.setProviderUserId(instagramUserId);
-            oAuthInfo.setWorkspaceId(WorkspaceContext.getWorkspaceId());
-            log.info("Creating new Instagram OAuth record for user: {}", userId);
-        } else {
-            log.info("Updating existing Instagram OAuth record for user: {}", userId);
-        }
-
         long expiresAtMillis = System.currentTimeMillis() + expiresIn * 1000L;
-        oAuthInfo.setAccessToken(accessToken);
-        oAuthInfo.setExpiresAt(expiresAtMillis);
-        oAuthInfo.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiresAtMillis));
-
-        if (oAuthInfo.getAdditionalInfo() == null) {
-            oAuthInfo.setAdditionalInfo(new AdditionalOAuthInfo());
+        AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
+        PersistedConnection saved;
+        if (sessionId != null) {
+            saved = oauthConnectionPersistenceService.saveClientConnection(
+                    workspaceId,
+                    managingUserId,
+                    sessionId,
+                    ownerDisplayName,
+                    ownerEmail,
+                    Provider.INSTAGRAM,
+                    instagramUserId,
+                    accessToken,
+                    TimeUtil.toUTCOffsetDateTime(expiresAtMillis),
+                    additionalOAuthInfo
+            );
+        } else {
+            saved = oauthConnectionPersistenceService.saveWorkspaceMemberConnection(
+                    workspaceId,
+                    managingUserId,
+                    Provider.INSTAGRAM,
+                    instagramUserId,
+                    accessToken,
+                    TimeUtil.toUTCOffsetDateTime(expiresAtMillis),
+                    additionalOAuthInfo
+            );
         }
 
-        OAuthInfoEntity saved = repo.save(oAuthInfo);
-        redisTokenExpirySaver.saveTokenExpiry(saved);
-
-        log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", userId, instagramUserId);
+        log.info("Instagram OAuth successfully completed for user: {}, Instagram ID: {}", managingUserId, instagramUserId);
+        return saved;
     }
 
     /**

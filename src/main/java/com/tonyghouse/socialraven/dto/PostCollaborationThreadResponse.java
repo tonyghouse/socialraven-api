@@ -22,6 +22,9 @@ public class PostCollaborationThreadResponse {
     private Integer anchorStart;
     private Integer anchorEnd;
     private String anchorText;
+    private Long mediaId;
+    private Double mediaMarkerX;
+    private Double mediaMarkerY;
     private String suggestedText;
     private String suggestionStatus;
     private String suggestionDecidedByUserId;

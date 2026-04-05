@@ -1,5 +1,6 @@
 package com.tonyghouse.socialraven.dto;
 
+import com.tonyghouse.socialraven.constant.WorkspaceApprovalMode;
 import lombok.Data;
 
 import java.time.OffsetDateTime;
@@ -39,4 +40,10 @@ public class UpdatePostCollectionRequest {
      * Material changes will move approved content back into review.
      */
     private Boolean acknowledgeApprovalLock;
+
+    /** Optional per-campaign override of the workspace approval mode. */
+    private WorkspaceApprovalMode approvalModeOverride;
+
+    /** When true, clears any saved per-campaign approval override. */
+    private Boolean clearApprovalModeOverride;
 }

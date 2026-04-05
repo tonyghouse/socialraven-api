@@ -9,8 +9,11 @@ import com.tonyghouse.socialraven.dto.ScheduleDraftRequest;
 import com.tonyghouse.socialraven.dto.UpdatePostCollectionRequest;
 import com.tonyghouse.socialraven.service.post.PostService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
+import java.nio.charset.StandardCharsets;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -84,6 +87,13 @@ public class PostCollectionController {
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/{id}/activate-approved-schedule")
+    public PostCollectionResponse activateApprovedSchedule(@PathVariable Long id) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return postService.activateApprovedSchedule(userId, id);
+    }
+
+    @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/{id}/recovery-draft")
     public PostCollectionResponse createRecoveryDraft(@PathVariable Long id) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
@@ -106,6 +116,19 @@ public class PostCollectionController {
             @RequestBody(required = false) PostCollectionReviewActionRequest request) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         return postService.requestChanges(userId, id, request);
+    }
+
+    @GetMapping("/{id}/approval-log/export")
+    public ResponseEntity<byte[]> exportApprovalLog(@PathVariable Long id) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        byte[] csv = postService.exportApprovalLog(userId, id);
+        return ResponseEntity.ok()
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"post-collection-" + id + "-approval-log.csv\""
+                )
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .body(csv);
     }
 
 }

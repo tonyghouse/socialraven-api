@@ -86,6 +86,9 @@ public class ClientReportService {
     @Autowired
     private EmailService emailService;
 
+    @Autowired
+    private ClientReportPdfService clientReportPdfService;
+
     @Value("${socialraven.app.base-url:https://socialraven.io}")
     private String appBaseUrl;
 
@@ -236,6 +239,21 @@ public class ClientReportService {
         ResolvedClientReportLink resolved = resolvePublicLink(token);
         markLastAccessed(resolved.link());
         return buildPublicReport(resolved.link(), resolved.workspaceSnapshot(), resolved.tokenExpiresAt());
+    }
+
+    @Transactional
+    public ClientReportPdfDocument getPublicReportPdf(String token) {
+        ResolvedClientReportLink resolved = resolvePublicLink(token);
+        markLastAccessed(resolved.link());
+        PublicClientReportResponse report = buildPublicReport(
+                resolved.link(),
+                resolved.workspaceSnapshot(),
+                resolved.tokenExpiresAt()
+        );
+        return new ClientReportPdfDocument(
+                clientReportPdfService.render(report),
+                buildPdfFileName(report)
+        );
     }
 
     @Transactional
@@ -492,6 +510,13 @@ public class ClientReportService {
                 : now.plusHours(DEFAULT_SHARE_EXPIRY_HOURS);
         if (!expiresAt.isAfter(now)) {
             throw new SocialRavenException("expiresAt must be in the future", HttpStatus.BAD_REQUEST);
+        }
+        OffsetDateTime maxAllowedExpiry = now.plusHours(MAX_SHARE_EXPIRY_HOURS);
+        if (expiresAt.isAfter(maxAllowedExpiry)) {
+            throw new SocialRavenException(
+                    "expiresAt cannot be more than 31 days in the future",
+                    HttpStatus.BAD_REQUEST
+            );
         }
         return expiresAt;
     }
@@ -759,6 +784,23 @@ public class ClientReportService {
         return reportCommentary + " Prepared " + timestamp + ".";
     }
 
+    private String buildPdfFileName(PublicClientReportResponse report) {
+        String candidate = defaultIfBlank(report.getReportTitle(), report.getClientLabel());
+        if (candidate == null || candidate.isBlank()) {
+            candidate = "client-report";
+        }
+        String slug = candidate.toLowerCase(Locale.ENGLISH)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-|-$)", "");
+        if (slug.isBlank()) {
+            slug = "client-report";
+        }
+        if (!slug.endsWith("-report")) {
+            slug = slug + "-report";
+        }
+        return slug + ".pdf";
+    }
+
     private String resolveBaseUrl() {
         String trimmed = appBaseUrl == null || appBaseUrl.isBlank()
                 ? "https://socialraven.io"
@@ -775,5 +817,8 @@ public class ClientReportService {
     private record ResolvedClientReportLink(WorkspaceClientReportLinkEntity link,
                                             WorkspaceSnapshot workspaceSnapshot,
                                             OffsetDateTime tokenExpiresAt) {
+    }
+
+    public record ClientReportPdfDocument(byte[] bytes, String fileName) {
     }
 }

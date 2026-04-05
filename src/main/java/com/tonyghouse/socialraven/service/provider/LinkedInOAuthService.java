@@ -2,12 +2,16 @@ package com.tonyghouse.socialraven.service.provider;
 
 import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.entity.WorkspaceClientConnectionSessionEntity;
 import com.tonyghouse.socialraven.helper.RedisTokenExpirySaver;
 import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService;
+import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
 
+import java.time.OffsetDateTime;
 import java.util.Map;
 
 import com.tonyghouse.socialraven.util.TimeUtil;
@@ -43,10 +47,37 @@ public class LinkedInOAuthService {
     @Autowired
     private RedisTokenExpirySaver redisTokenExpirySaver;
 
+    @Autowired
+    private OAuthConnectionPersistenceService oauthConnectionPersistenceService;
+
     private static final String TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 
     public void exchangeCodeForToken(String code) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        exchangeCode(code, workspaceId, userId, null, null, null);
+    }
 
+    public PersistedConnection exchangeCodeForClientConnection(String code,
+                                                               WorkspaceClientConnectionSessionEntity session,
+                                                               String ownerDisplayName,
+                                                               String ownerEmail) {
+        return exchangeCode(
+                code,
+                session.getWorkspaceId(),
+                session.getCreatedByUserId(),
+                session.getId(),
+                ownerDisplayName,
+                ownerEmail
+        );
+    }
+
+    private PersistedConnection exchangeCode(String code,
+                                             String workspaceId,
+                                             String managingUserId,
+                                             String sessionId,
+                                             String ownerDisplayName,
+                                             String ownerEmail) {
         RestTemplate rest = new RestTemplate();
 
         // Prepare params
@@ -86,31 +117,34 @@ public class LinkedInOAuthService {
         Map<String, Object> userInfo = getUserInfo(accessToken);
         String linkedInUserId = (String) userInfo.get("sub");
 
-        // DB entity
-        OAuthInfoEntity oauthInfoEntity = new OAuthInfoEntity();
-        oauthInfoEntity.setProvider(Provider.LINKEDIN);
-        oauthInfoEntity.setProviderUserId(linkedInUserId);
-        oauthInfoEntity.setAccessToken(accessToken);
-
-        long expiryMillis = System.currentTimeMillis() + (expiresIn * 1000L);
-        oauthInfoEntity.setExpiresAt(expiryMillis);
-        oauthInfoEntity.setExpiresAtUtc(TimeUtil.toUTCOffsetDateTime(expiryMillis));
-
-        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        oauthInfoEntity.setUserId(userId);
-        oauthInfoEntity.setWorkspaceId(WorkspaceContext.getWorkspaceId());
-
-        // JSONB container
         AdditionalOAuthInfo additional = new AdditionalOAuthInfo();
-        oauthInfoEntity.setAdditionalInfo(additional);
+        long expiryMillis = System.currentTimeMillis() + (expiresIn * 1000L);
+        OffsetDateTime expiresAtUtc = TimeUtil.toUTCOffsetDateTime(expiryMillis);
 
-        OAuthInfoEntity existingAuthInfo = repo.findByUserIdAndProviderAndProviderUserId(userId, Provider.LINKEDIN, linkedInUserId);
-        if (existingAuthInfo != null) {
-            oauthInfoEntity.setId(existingAuthInfo.getId());
+        if (sessionId != null) {
+            return oauthConnectionPersistenceService.saveClientConnection(
+                    workspaceId,
+                    managingUserId,
+                    sessionId,
+                    ownerDisplayName,
+                    ownerEmail,
+                    Provider.LINKEDIN,
+                    linkedInUserId,
+                    accessToken,
+                    expiresAtUtc,
+                    additional
+            );
         }
-        // Persist
-        repo.save(oauthInfoEntity);
-        redisTokenExpirySaver.saveTokenExpiry(oauthInfoEntity);
+
+        return oauthConnectionPersistenceService.saveWorkspaceMemberConnection(
+                workspaceId,
+                managingUserId,
+                Provider.LINKEDIN,
+                linkedInUserId,
+                accessToken,
+                expiresAtUtc,
+                additional
+        );
     }
 
     // Fetch LinkedIn OIDC User Info

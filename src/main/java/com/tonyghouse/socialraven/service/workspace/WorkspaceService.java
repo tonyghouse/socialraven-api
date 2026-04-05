@@ -86,6 +86,9 @@ public class WorkspaceService {
     @Autowired
     private WorkspaceCapabilityService workspaceCapabilityService;
 
+    @Autowired
+    private WorkspaceApprovalRuleService workspaceApprovalRuleService;
+
     public List<WorkspaceResponse> getMyWorkspaces(String userId) {
         List<WorkspaceMemberEntity> memberships = workspaceMemberRepo.findAllByUserId(userId);
         return memberships.stream()
@@ -198,6 +201,9 @@ public class WorkspaceService {
         if (req.getApprovalMode() != null) {
             workspace.setApprovalMode(req.getApprovalMode());
         }
+        if (req.getAutoScheduleAfterApproval() != null) {
+            workspace.setAutoScheduleAfterApproval(req.getAutoScheduleAfterApproval());
+        }
         workspace.setUpdatedAt(OffsetDateTime.now());
         workspaceRepo.save(workspace);
 
@@ -210,6 +216,12 @@ public class WorkspaceService {
 
         if (req.getApproverUserIds() != null) {
             workspaceCapabilityService.replaceExplicitApprovers(workspaceId, req.getApproverUserIds());
+        }
+        if (req.getPublisherUserIds() != null) {
+            workspaceCapabilityService.replaceExplicitPublishers(workspaceId, req.getPublisherUserIds());
+        }
+        if (req.getApprovalRules() != null) {
+            workspaceApprovalRuleService.replaceRules(workspaceId, req.getApprovalRules());
         }
 
         return toResponse(workspace, userId, role);
@@ -376,8 +388,11 @@ public class WorkspaceService {
                 workspace.getLogoS3Key(),
                 role,
                 approvalMode,
+                workspace.isAutoScheduleAfterApproval(),
                 approvalMode == WorkspaceApprovalMode.MULTI_STEP,
                 workspaceCapabilityService.getExplicitApproverUserIds(workspace.getId()),
+                workspaceCapabilityService.getExplicitPublisherUserIds(workspace.getId()),
+                workspaceApprovalRuleService.getRules(workspace.getId()),
                 workspaceCapabilityService.getEffectiveCapabilitiesList(workspace.getId(), userId, role),
                 workspace.getCreatedAt(),
                 workspace.getUpdatedAt(),
