@@ -1,8 +1,10 @@
 package com.tonyghouse.socialraven.controller;
 
 import com.tonyghouse.socialraven.annotation.RequiresRole;
+import com.tonyghouse.socialraven.constant.Platform;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.XOAuthCallbackRequest;
+import com.tonyghouse.socialraven.service.ConnectionFailureAlertService;
 import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
 import com.tonyghouse.socialraven.service.provider.LinkedInOAuthService;
@@ -60,14 +62,17 @@ public class OAuthController {
     @Autowired
     private JedisPool jedisPool;
 
+    @Autowired
+    private ConnectionFailureAlertService connectionFailureAlertService;
+
 
     @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/x/callback")
     public ResponseEntity<String> handleCallback(
             @RequestBody XOAuthCallbackRequest request
     ) {
-        xOAuthService.handleCallback(request);
-        return ResponseEntity.ok("X connected");
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return runWorkspaceConnectionCallback(Platform.x, userId, () -> xOAuthService.handleCallback(request), "X connected");
     }
 
 
@@ -76,20 +81,25 @@ public class OAuthController {
     @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/linkedin/callback")
     public ResponseEntity<String> handleLinkedinCallback(@RequestBody Map<String, String> body) {
-        linkedInOAuthService.exchangeCodeForToken(body.get("code"));
-        return ResponseEntity.ok("LinkedIn connected");
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return runWorkspaceConnectionCallback(
+                Platform.linkedin,
+                userId,
+                () -> linkedInOAuthService.exchangeCodeForToken(body.get("code")),
+                "LinkedIn connected"
+        );
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
     @PostMapping("/youtube/callback")
     public ResponseEntity<?> youtubeCallback(@RequestBody Map<String, String> body) {
-        try {
-            youtubeOAuthService.exchangeCodeForTokens(body.get("code"));
-            return ResponseEntity.ok("YouTube connected");
-        } catch (Exception exp) {
-            log.error("Youtube Callback Url Failed: {}", exp.getMessage(), exp);
-            throw new RuntimeException(exp);
-        }
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return runWorkspaceConnectionCallback(
+                Platform.youtube,
+                userId,
+                () -> youtubeOAuthService.exchangeCodeForTokens(body.get("code")),
+                "YouTube connected"
+        );
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
@@ -98,8 +108,12 @@ public class OAuthController {
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        instagramOAuthService.handleCallback(body.get("code"), userId);
-        return ResponseEntity.ok("Instagram connected");
+        return runWorkspaceConnectionCallback(
+                Platform.instagram,
+                userId,
+                () -> instagramOAuthService.handleCallback(body.get("code"), userId),
+                "Instagram connected"
+        );
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
@@ -108,8 +122,12 @@ public class OAuthController {
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        facebookOAuthService.handleCallback(body.get("code"), userId);
-        return ResponseEntity.ok("Facebook connected");
+        return runWorkspaceConnectionCallback(
+                Platform.facebook,
+                userId,
+                () -> facebookOAuthService.handleCallback(body.get("code"), userId),
+                "Facebook connected"
+        );
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
@@ -118,8 +136,12 @@ public class OAuthController {
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        threadsOAuthService.handleCallback(body.get("code"), userId);
-        return ResponseEntity.ok("Threads connected");
+        return runWorkspaceConnectionCallback(
+                Platform.threads,
+                userId,
+                () -> threadsOAuthService.handleCallback(body.get("code"), userId),
+                "Threads connected"
+        );
     }
 
     @RequiresRole(WorkspaceRole.EDITOR)
@@ -128,8 +150,12 @@ public class OAuthController {
             @RequestBody Map<String, String> body
     ) {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
-        tikTokOAuthService.handleCallback(body.get("code"), userId);
-        return ResponseEntity.ok("TikTok connected");
+        return runWorkspaceConnectionCallback(
+                Platform.tiktok,
+                userId,
+                () -> tikTokOAuthService.handleCallback(body.get("code"), userId),
+                "TikTok connected"
+        );
     }
 
 
@@ -184,6 +210,28 @@ public class OAuthController {
         Map<String, String> response = new HashMap<>();
         response.put("verifier", verifier);
         return ResponseEntity.ok(response);
+    }
+
+    private ResponseEntity<String> runWorkspaceConnectionCallback(Platform platform,
+                                                                  String userId,
+                                                                  ThrowingRunnable callback,
+                                                                  String successMessage) {
+        try {
+            callback.run();
+            return ResponseEntity.ok(successMessage);
+        } catch (Exception exception) {
+            log.error("{} OAuth callback failed for userId={}", platform, userId, exception);
+            connectionFailureAlertService.notifyWorkspaceConnectionFailure(platform, userId, exception);
+            if (exception instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException(exception);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run();
     }
 
 }

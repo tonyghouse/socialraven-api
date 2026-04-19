@@ -20,6 +20,7 @@ import com.tonyghouse.socialraven.repo.WorkspaceClientConnectionAuditRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceClientConnectionSessionRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
+import com.tonyghouse.socialraven.service.ConnectionFailureAlertService;
 import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersistenceService.PersistedConnection;
 import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
@@ -106,6 +107,9 @@ public class ClientConnectionService {
     @Autowired
     private TikTokOAuthService tikTokOAuthService;
 
+    @Autowired
+    private ConnectionFailureAlertService connectionFailureAlertService;
+
     @Transactional(readOnly = true)
     public List<ClientConnectionSessionResponse> getSessions(String userId) {
         String workspaceId = requireWorkspaceId();
@@ -185,65 +189,82 @@ public class ClientConnectionService {
                                                                      Platform platform,
                                                                      PublicClientConnectionCallbackRequest request) {
         ResolvedClientConnectionSession resolved = requireActivePublicSession(token);
-        Platform requestedPlatform = requireAllowedPlatform(resolved.session(), platform);
-        String actorDisplayName = normalizeRequiredName(request != null ? request.getActorDisplayName() : null);
-        String actorEmail = normalizeEmail(request != null ? request.getActorEmail() : null, true);
-        enforceRecipientEmail(resolved.session(), actorEmail);
+        String actorDisplayNameInput = request != null ? request.getActorDisplayName() : null;
+        String actorEmailInput = request != null ? request.getActorEmail() : null;
 
-        PersistedConnection persisted = switch (requestedPlatform) {
-            case linkedin -> linkedInOAuthService.exchangeCodeForClientConnection(
-                    requireCode(request),
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            case youtube -> youTubeOAuthService.exchangeCodeForClientConnection(
-                    requireCode(request),
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            case instagram -> instagramOAuthService.exchangeCodeForClientConnection(
-                    requireCode(request),
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            case facebook -> facebookOAuthService.exchangeCodeForClientConnection(
-                    requireCode(request),
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            case tiktok -> tikTokOAuthService.exchangeCodeForClientConnection(
-                    requireCode(request),
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            case x -> xOAuthService.completeClientConnection(
-                    request != null ? request.getAccessToken() : null,
-                    request != null ? request.getAccessTokenSecret() : null,
-                    resolved.session(),
-                    actorDisplayName,
-                    actorEmail
-            );
-            default -> throw new SocialRavenException(
-                    "This platform is not supported for client connection handoff",
-                    HttpStatus.BAD_REQUEST
-            );
-        };
+        try {
+            Platform requestedPlatform = requireAllowedPlatform(resolved.session(), platform);
+            String actorDisplayName = normalizeRequiredName(actorDisplayNameInput);
+            String actorEmail = normalizeEmail(actorEmailInput, true);
+            enforceRecipientEmail(resolved.session(), actorEmail);
 
-        markLastAccessed(resolved.session());
-        WorkspaceClientConnectionAuditEntity audit = recordConnectionEvent(
-                resolved.session(),
-                persisted.entity().getProvider(),
-                persisted.entity().getProviderUserId(),
-                actorDisplayName,
-                actorEmail,
-                persisted.reauthorized()
-        );
-        return toActivityResponse(audit);
+            PersistedConnection persisted = switch (requestedPlatform) {
+                case linkedin -> linkedInOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case youtube -> youTubeOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case instagram -> instagramOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case facebook -> facebookOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case tiktok -> tikTokOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case x -> xOAuthService.completeClientConnection(
+                        request != null ? request.getAccessToken() : null,
+                        request != null ? request.getAccessTokenSecret() : null,
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                default -> throw new SocialRavenException(
+                        "This platform is not supported for client connection handoff",
+                        HttpStatus.BAD_REQUEST
+                );
+            };
+
+            markLastAccessed(resolved.session());
+            WorkspaceClientConnectionAuditEntity audit = recordConnectionEvent(
+                    resolved.session(),
+                    persisted.entity().getProvider(),
+                    persisted.entity().getProviderUserId(),
+                    actorDisplayName,
+                    actorEmail,
+                    persisted.reauthorized()
+            );
+            return toActivityResponse(audit);
+        } catch (Exception exception) {
+            connectionFailureAlertService.notifyClientConnectionFailure(
+                    platform,
+                    resolved.session(),
+                    actorDisplayNameInput,
+                    actorEmailInput,
+                    exception
+            );
+            if (exception instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException(exception);
+        }
     }
 
     private String requireWorkspaceId() {
