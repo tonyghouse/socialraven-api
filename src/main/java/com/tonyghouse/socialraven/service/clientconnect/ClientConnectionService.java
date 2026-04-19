@@ -24,6 +24,7 @@ import com.tonyghouse.socialraven.service.clientconnect.OAuthConnectionPersisten
 import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
 import com.tonyghouse.socialraven.service.provider.LinkedInOAuthService;
+import com.tonyghouse.socialraven.service.provider.TikTokOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
 import com.tonyghouse.socialraven.service.storage.StorageService;
@@ -59,7 +60,8 @@ public class ClientConnectionService {
             Platform.linkedin,
             Platform.youtube,
             Platform.instagram,
-            Platform.facebook
+            Platform.facebook,
+            Platform.tiktok
     );
     private static final int MAX_MESSAGE_LENGTH = 4000;
     private static final int MAX_EXPIRY_DAYS = 30;
@@ -100,6 +102,9 @@ public class ClientConnectionService {
 
     @Autowired
     private XOAuthService xOAuthService;
+
+    @Autowired
+    private TikTokOAuthService tikTokOAuthService;
 
     @Transactional(readOnly = true)
     public List<ClientConnectionSessionResponse> getSessions(String userId) {
@@ -205,6 +210,12 @@ public class ClientConnectionService {
                     actorEmail
             );
             case facebook -> facebookOAuthService.exchangeCodeForClientConnection(
+                    requireCode(request),
+                    resolved.session(),
+                    actorDisplayName,
+                    actorEmail
+            );
+            case tiktok -> tikTokOAuthService.exchangeCodeForClientConnection(
                     requireCode(request),
                     resolved.session(),
                     actorDisplayName,

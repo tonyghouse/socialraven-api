@@ -6,6 +6,7 @@ import com.tonyghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
 import com.tonyghouse.socialraven.service.provider.LinkedInOAuthService;
+import com.tonyghouse.socialraven.service.provider.TikTokOAuthService;
 import com.tonyghouse.socialraven.service.provider.ThreadsOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -52,6 +53,9 @@ public class OAuthController {
 
     @Autowired
     private ThreadsOAuthService threadsOAuthService;
+
+    @Autowired
+    private TikTokOAuthService tikTokOAuthService;
 
     @Autowired
     private JedisPool jedisPool;
@@ -116,6 +120,16 @@ public class OAuthController {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         threadsOAuthService.handleCallback(body.get("code"), userId);
         return ResponseEntity.ok("Threads connected");
+    }
+
+    @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/tiktok/callback")
+    public ResponseEntity<?> tikTokCallback(
+            @RequestBody Map<String, String> body
+    ) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        tikTokOAuthService.handleCallback(body.get("code"), userId);
+        return ResponseEntity.ok("TikTok connected");
     }
 
 

@@ -30,6 +30,10 @@ public class ProviderPlatformMapper {
             return Platform.facebook;
         }
 
+        if (Provider.TIKTOK == provider) {
+            return Platform.tiktok;
+        }
+
         if (Provider.THREADS == provider) {
             return Platform.threads;
         }
@@ -60,6 +64,10 @@ public class ProviderPlatformMapper {
 
         if (Platform.facebook == platform) {
             return Provider.FACEBOOK;
+        }
+
+        if (Platform.tiktok == platform) {
+            return Provider.TIKTOK;
         }
 
         if (Platform.threads == platform) {

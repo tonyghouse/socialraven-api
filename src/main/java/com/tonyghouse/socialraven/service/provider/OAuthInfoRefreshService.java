@@ -35,6 +35,9 @@ public class OAuthInfoRefreshService {
     private ThreadsOAuthService threadsOAuthService;
 
     @Autowired
+    private TikTokOAuthService tikTokOAuthService;
+
+    @Autowired
     private ExecutorService virtualThreadExecutor; // injected bean
 
     public void refreshOAuthInfo(Long id) {
@@ -65,6 +68,8 @@ public class OAuthInfoRefreshService {
                     instagramOAuthService.refreshAccessToken(oauthInfo);
                 } else if (Provider.FACEBOOK.equals(oauthInfo.getProvider())) {
                     facebookOAuthService.refreshAccessToken(oauthInfo);
+                } else if (Provider.TIKTOK.equals(oauthInfo.getProvider())) {
+                    tikTokOAuthService.refreshAccessToken(oauthInfo);
                 } else if (Provider.THREADS.equals(oauthInfo.getProvider())) {
                     threadsOAuthService.refreshAccessToken(oauthInfo);
                 } else {

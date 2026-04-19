@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
+import com.tonyghouse.socialraven.service.provider.TikTokOAuthService;
 import com.tonyghouse.socialraven.service.provider.ThreadsOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
@@ -65,7 +66,13 @@ public class AccountProfileService {
     private ThreadsProfileService threadsProfileService;
 
     @Autowired
+    private TikTokProfileService tikTokProfileService;
+
+    @Autowired
     private ThreadsOAuthService threadsOAuthService;
+
+    @Autowired
+    private TikTokOAuthService tikTokOAuthService;
 
     @Autowired
     private Environment environment;
@@ -276,6 +283,11 @@ public class AccountProfileService {
             if (Provider.INSTAGRAM.equals(authInfo.getProvider())) {
                 var validOAuthInfo = instagramOAuthService.getValidOAuthInfo(authInfo);
                 return instagramProfileService.fetchProfile(validOAuthInfo);
+            }
+
+            if (Provider.TIKTOK.equals(authInfo.getProvider())) {
+                var validOAuthInfo = tikTokOAuthService.getValidOAuthInfo(authInfo);
+                return tikTokProfileService.fetchProfile(validOAuthInfo);
             }
 
             if (Provider.THREADS.equals(authInfo.getProvider())) {
