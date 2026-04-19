@@ -32,6 +32,9 @@ public class OAuthInfoRefreshService {
     private FacebookOAuthService facebookOAuthService;
 
     @Autowired
+    private ThreadsOAuthService threadsOAuthService;
+
+    @Autowired
     private ExecutorService virtualThreadExecutor; // injected bean
 
     public void refreshOAuthInfo(Long id) {
@@ -62,6 +65,8 @@ public class OAuthInfoRefreshService {
                     instagramOAuthService.refreshAccessToken(oauthInfo);
                 } else if (Provider.FACEBOOK.equals(oauthInfo.getProvider())) {
                     facebookOAuthService.refreshAccessToken(oauthInfo);
+                } else if (Provider.THREADS.equals(oauthInfo.getProvider())) {
+                    threadsOAuthService.refreshAccessToken(oauthInfo);
                 } else {
                     log.warn("Unknown provider for id {}: {}", oauthInfo.getId(), oauthInfo.getProvider());
                 }

@@ -30,6 +30,10 @@ public class ProviderPlatformMapper {
             return Platform.facebook;
         }
 
+        if (Provider.THREADS == provider) {
+            return Platform.threads;
+        }
+
         return null;
     }
 
@@ -56,6 +60,10 @@ public class ProviderPlatformMapper {
 
         if (Platform.facebook == platform) {
             return Provider.FACEBOOK;
+        }
+
+        if (Platform.threads == platform) {
+            return Provider.THREADS;
         }
 
         return null;

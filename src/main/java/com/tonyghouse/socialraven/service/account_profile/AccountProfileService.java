@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
+import com.tonyghouse.socialraven.service.provider.ThreadsOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
 import jakarta.annotation.Nonnull;
@@ -59,6 +60,12 @@ public class AccountProfileService {
 
     @Autowired
     private InstagramOAuthService instagramOAuthService;
+
+    @Autowired
+    private ThreadsProfileService threadsProfileService;
+
+    @Autowired
+    private ThreadsOAuthService threadsOAuthService;
 
     @Autowired
     private Environment environment;
@@ -269,6 +276,11 @@ public class AccountProfileService {
             if (Provider.INSTAGRAM.equals(authInfo.getProvider())) {
                 var validOAuthInfo = instagramOAuthService.getValidOAuthInfo(authInfo);
                 return instagramProfileService.fetchProfile(validOAuthInfo);
+            }
+
+            if (Provider.THREADS.equals(authInfo.getProvider())) {
+                var validOAuthInfo = threadsOAuthService.getValidOAuthInfo(authInfo);
+                return threadsProfileService.fetchProfile(validOAuthInfo);
             }
         } catch (Exception ex) {
             log.warn("Provider profile resolution failed for provider={}, providerUserId={}: {}",

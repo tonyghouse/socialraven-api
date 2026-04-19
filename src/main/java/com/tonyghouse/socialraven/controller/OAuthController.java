@@ -6,6 +6,7 @@ import com.tonyghouse.socialraven.dto.XOAuthCallbackRequest;
 import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
 import com.tonyghouse.socialraven.service.provider.LinkedInOAuthService;
+import com.tonyghouse.socialraven.service.provider.ThreadsOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
@@ -48,6 +49,9 @@ public class OAuthController {
 
     @Autowired
     private FacebookOAuthService facebookOAuthService;
+
+    @Autowired
+    private ThreadsOAuthService threadsOAuthService;
 
     @Autowired
     private JedisPool jedisPool;
@@ -102,6 +106,16 @@ public class OAuthController {
         String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
         facebookOAuthService.handleCallback(body.get("code"), userId);
         return ResponseEntity.ok("Facebook connected");
+    }
+
+    @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/threads/callback")
+    public ResponseEntity<?> threadsCallback(
+            @RequestBody Map<String, String> body
+    ) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        threadsOAuthService.handleCallback(body.get("code"), userId);
+        return ResponseEntity.ok("Threads connected");
     }
 
 
