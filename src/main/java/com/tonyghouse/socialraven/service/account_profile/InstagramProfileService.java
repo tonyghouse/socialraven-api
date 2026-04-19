@@ -3,71 +3,111 @@ package com.tonyghouse.socialraven.service.account_profile;
 import com.tonyghouse.socialraven.constant.Platform;
 import com.tonyghouse.socialraven.dto.ConnectedAccount;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.Map;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 @Slf4j
 public class InstagramProfileService {
 
-    private final RestTemplate rest = new RestTemplate();
+    private static final String GRAPH_BASE = "https://graph.instagram.com/v22.0";
+
+    private RestTemplate rest = new RestTemplate();
 
     public ConnectedAccount fetchProfile(OAuthInfoEntity info) {
+        String accessToken = safeTrim(info.getAccessToken());
+        String providerUserId = safeTrim(info.getProviderUserId());
+
         try {
-            String accessToken = info.getAccessToken();
-            String userId = info.getProviderUserId();
-
-            // Always trim the token in case of whitespace issues from storage/retrieval
-            final String cleanAccessToken = accessToken.trim();
-            final String cleanUserId = userId.trim();
-
-            log.debug("Fetching Instagram profile for providerUserId={}, tokenLength={}",
-                    cleanUserId, cleanAccessToken.length());
-
-            // **FIXED:** Use the correct Instagram Graph API domain (graph.instagram.com)
-            // and fields that are guaranteed to be available (username and id).
-            String url = "https://graph.instagram.com/me" +
-                    "?fields=id,username" + // profile_picture_url is not a standard field here
-                    "&access_token=" + cleanAccessToken;
-
-            log.debug("Making API call to: {}", url.replace(cleanAccessToken, "***TOKEN***"));
-
-            Map<String, Object> response = rest.getForObject(url, Map.class);
-
-            if (response == null || response.get("username") == null) {
-                log.warn("Instagram profile response missing username for providerUserId={}", cleanUserId);
+            Map<String, Object> response = fetchProfileResponse(providerUserId, accessToken);
+            if (response == null) {
                 return null;
             }
 
-            String fetchedUsername = (String) response.get("username");
-            log.debug("Instagram profile fetched for providerUserId={}", cleanUserId);
+            String username = firstNonBlank(response.get("username"), response.get("name"));
+            if (username == null) {
+                log.warn("Instagram profile response missing username for providerUserId={}", providerUserId);
+                return null;
+            }
 
             ConnectedAccount dto = new ConnectedAccount();
-            dto.setProviderUserId(cleanUserId);
+            dto.setProviderUserId(providerUserId);
             dto.setPlatform(Platform.instagram);
-            dto.setUsername(fetchedUsername);
-
-            // Note: We cannot reliably fetch the profile picture URL using this endpoint alone.
-            // If the application needs a profile picture, a different approach (like a separate API request to a user picture endpoint, or potentially scraping with caution) would be needed, which is outside the scope of this fix.
-            dto.setProfilePicLink(null);
-
+            dto.setUsername(username);
+            dto.setProfilePicLink(firstNonBlank(response.get("profile_pic"), response.get("profile_picture_url")));
             return dto;
-
         } catch (HttpClientErrorException exp) {
             log.warn("Instagram profile request failed: status={}, providerUserId={}, message={}",
                     exp.getStatusCode().value(),
-                    info.getProviderUserId(),
+                    providerUserId,
                     exp.getStatusText());
             return null;
         } catch (Exception exp) {
             log.warn("Instagram profile request failed for providerUserId={}: {}",
-                    info.getProviderUserId(),
+                    providerUserId,
                     exp.getMessage());
             return null;
         }
+    }
+
+    private Map<String, Object> fetchProfileResponse(String providerUserId, String accessToken) {
+        List<ProfileLookup> lookups = List.of(
+                new ProfileLookup(GRAPH_BASE + "/" + providerUserId, "id,username,name,profile_pic"),
+                new ProfileLookup(GRAPH_BASE + "/" + providerUserId, "id,username,name,profile_picture_url"),
+                new ProfileLookup("https://graph.instagram.com/me", "id,username,name,profile_picture_url"),
+                new ProfileLookup("https://graph.instagram.com/me", "id,username,name")
+        );
+
+        for (ProfileLookup lookup : lookups) {
+            try {
+                String url = UriComponentsBuilder
+                        .fromHttpUrl(lookup.path())
+                        .queryParam("fields", lookup.fields())
+                        .queryParam("access_token", accessToken)
+                        .build()
+                        .encode()
+                        .toUriString();
+
+                Map<String, Object> response = rest.getForObject(url, Map.class);
+                if (response == null) {
+                    continue;
+                }
+
+                if (firstNonBlank(response.get("username"), response.get("name")) != null) {
+                    return response;
+                }
+            } catch (HttpClientErrorException ex) {
+                log.debug("Instagram profile lookup failed for path={} fields={}: {}",
+                        lookup.path(), lookup.fields(), ex.getStatusCode().value());
+            }
+        }
+
+        return null;
+    }
+
+    private String firstNonBlank(Object... values) {
+        for (Object value : values) {
+            if (value == null) {
+                continue;
+            }
+
+            String stringValue = String.valueOf(value).trim();
+            if (!stringValue.isEmpty()) {
+                return stringValue;
+            }
+        }
+        return null;
+    }
+
+    private String safeTrim(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private record ProfileLookup(String path, String fields) {
     }
 }
