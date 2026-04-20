@@ -15,6 +15,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.tonyghouse.socialraven.util.TimeUtil;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -87,12 +90,14 @@ public class YouTubeOAuthService {
         String refreshToken = (String) resp.getBody().get("refresh_token");
         Integer expiresIn = (Integer) resp.getBody().get("expires_in");
 
-        // STEP 2: Fetch YouTube Provider User ID (CHANNEL ID)
-        String providerUserId = fetchYoutubeChannelId(accessToken);
+        ChannelProfile channelProfile = fetchYoutubeChannelProfile(accessToken);
+        String providerUserId = channelProfile.channelId();
 
         long expiresAtMillis = System.currentTimeMillis() + (expiresIn * 1000L);
         AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
         additionalOAuthInfo.setYoutubeRefreshToken(refreshToken);
+        additionalOAuthInfo.setYoutubeChannelTitle(channelProfile.channelTitle());
+        additionalOAuthInfo.setYoutubeChannelThumbnailUrl(channelProfile.channelThumbnailUrl());
         if (sessionId != null) {
             return oauthConnectionPersistenceService.saveClientConnection(
                     workspaceId,
@@ -119,31 +124,35 @@ public class YouTubeOAuthService {
         );
     }
 
-    // =====================
-    // FETCH YOUTUBE CHANNEL ID
-    // =====================
-    private String fetchYoutubeChannelId(String accessToken) {
+    private ChannelProfile fetchYoutubeChannelProfile(String accessToken) {
         RestTemplate rest = new RestTemplate();
 
-        String url = "https://www.googleapis.com/youtube/v3/channels?part=id&mine=true";
+        String url = "https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true";
 
-        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        HttpHeaders headers = new HttpHeaders();
         headers.add("Authorization", "Bearer " + accessToken);
 
-        org.springframework.http.HttpEntity<String> entity =
-                new org.springframework.http.HttpEntity<>(headers);
+        HttpEntity<String> entity = new HttpEntity<>(headers);
 
         ResponseEntity<Map> response =
-                rest.exchange(url, org.springframework.http.HttpMethod.GET, entity, Map.class);
+                rest.exchange(url, HttpMethod.GET, entity, Map.class);
 
-        // Extract the first channel id
         var items = (java.util.List<Map<String, Object>>) response.getBody().get("items");
         if (items == null || items.isEmpty()) {
             throw new RuntimeException("No YouTube channel found for the authenticated user");
         }
 
         Map<String, Object> firstItem = items.get(0);
-        return (String) firstItem.get("id"); // The channel ID ✔
+        Map<String, Object> snippet = (Map<String, Object>) firstItem.get("snippet");
+        Map<String, Object> thumbnails = snippet != null
+                ? (Map<String, Object>) snippet.get("thumbnails")
+                : null;
+
+        return new ChannelProfile(
+                (String) firstItem.get("id"),
+                snippet != null ? (String) snippet.get("title") : null,
+                extractThumbnail(thumbnails)
+        );
     }
 
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {
@@ -206,6 +215,19 @@ public class YouTubeOAuthService {
         return updatedOAuthInfo;
     }
 
+    private String extractThumbnail(Map<String, Object> thumbnails) {
+        if (thumbnails == null || thumbnails.isEmpty()) {
+            return null;
+        }
+        for (String key : new String[]{"high", "medium", "default"}) {
+            Object raw = thumbnails.get(key);
+            if (raw instanceof Map<?, ?> thumb && thumb.get("url") instanceof String url && !url.isBlank()) {
+                return url;
+            }
+        }
+        return null;
+    }
 
-
+    private record ChannelProfile(String channelId, String channelTitle, String channelThumbnailUrl) {
+    }
 }

@@ -13,6 +13,7 @@ public interface OAuthInfoRepo extends JpaRepository<OAuthInfoEntity, Long> {
     // ── Workspace-scoped queries (primary — used after V8 migration) ───────────
     List<OAuthInfoEntity> findAllByWorkspaceId(String workspaceId);
     List<OAuthInfoEntity> findAllByWorkspaceIdAndProvider(String workspaceId, Provider provider);
+    List<OAuthInfoEntity> findAllByProviderAndProviderUserId(Provider provider, String providerUserId);
     OAuthInfoEntity findByWorkspaceIdAndProviderAndProviderUserId(String workspaceId, Provider provider, String providerUserId);
     OAuthInfoEntity findByWorkspaceIdAndProviderUserId(String workspaceId, String providerUserId);
 

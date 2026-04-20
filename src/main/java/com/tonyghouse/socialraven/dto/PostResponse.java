@@ -20,4 +20,5 @@ public class PostResponse {
     private OffsetDateTime scheduledTime;
     private List<MediaResponse> media;
     private ConnectedAccount connectedAccount;
+    private PostAnalyticsSummaryResponse analytics;
 }

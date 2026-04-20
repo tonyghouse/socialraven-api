@@ -17,7 +17,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -36,6 +41,9 @@ public class FacebookOAuthService {
 
     @Value("${facebook.redirect.uri}")
     private String redirectUri;
+
+    @Value("${facebook.webhook.subscribed-fields:feed}")
+    private String webhookSubscribedFields;
 
     @Autowired
     private OAuthInfoRepo repo;
@@ -90,6 +98,7 @@ public class FacebookOAuthService {
 
         String facebookUserId = fetchFacebookUserId(longLivedAccessToken);
         ResolvedFacebookPage resolvedPage = resolveFacebookPage(longLivedAccessToken);
+        subscribePageToWebhook(resolvedPage);
         long expiresAtMillis = System.currentTimeMillis() + expiresInValue.longValue() * 1000L;
 
         log.info("Resolved Facebook Page {} ({}) for Facebook user {}",
@@ -242,9 +251,41 @@ public class FacebookOAuthService {
                 continue;
             }
 
-            pages.add(new ResolvedFacebookPage(pageId, pageName, extractTasks(rawPage.get("tasks"))));
+            pages.add(new ResolvedFacebookPage(pageId, pageName, pageAccessToken, extractTasks(rawPage.get("tasks"))));
         }
         return pages;
+    }
+
+    private void subscribePageToWebhook(ResolvedFacebookPage page) {
+        String subscribedFields = valueAsString(webhookSubscribedFields);
+        if (subscribedFields == null) {
+            throw new RuntimeException("Facebook webhook subscribed fields are not configured");
+        }
+
+        String url = UriComponentsBuilder
+                .fromHttpUrl(GRAPH_BASE + "/" + page.pageId() + "/subscribed_apps")
+                .queryParam("subscribed_fields", subscribedFields)
+                .build()
+                .encode()
+                .toUriString();
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("access_token", page.pageAccessToken());
+
+        Map<String, Object> response = rest.postForObject(url, formEntity(form), Map.class);
+        if (response == null || !Boolean.TRUE.equals(response.get("success"))) {
+            throw new RuntimeException("Facebook Page webhook subscription failed");
+        }
+
+        log.info("Facebook Page webhook subscription enabled for pageId={} fields={}",
+                page.pageId(),
+                subscribedFields);
+    }
+
+    private HttpEntity<MultiValueMap<String, String>> formEntity(MultiValueMap<String, String> form) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        return new HttpEntity<>(form, headers);
     }
 
     private List<String> extractTasks(Object rawTasks) {
@@ -289,7 +330,10 @@ public class FacebookOAuthService {
         return stringValue.isEmpty() ? null : stringValue;
     }
 
-    private record ResolvedFacebookPage(String pageId, String pageName, List<String> tasks) {
+    private record ResolvedFacebookPage(String pageId,
+                                        String pageName,
+                                        String pageAccessToken,
+                                        List<String> tasks) {
 
         private boolean canPublishContent() {
             return tasks == null

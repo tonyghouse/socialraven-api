@@ -15,6 +15,12 @@ public interface PostAnalyticsSnapshotRepo extends JpaRepository<PostAnalyticsSn
 
     List<PostAnalyticsSnapshotEntity> findAllByPostId(Long postId);
 
+    List<PostAnalyticsSnapshotEntity> findAllByWorkspaceId(String workspaceId);
+
+    long countByWorkspaceId(String workspaceId);
+
+    long countByWorkspaceIdAndPostIdIn(String workspaceId, List<Long> postIds);
+
     @Modifying
     @Query(value = "DELETE FROM socialraven.post_analytics_snapshots WHERE workspace_id = :workspaceId", nativeQuery = true)
     void deleteAllByWorkspaceId(@Param("workspaceId") String workspaceId);

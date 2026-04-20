@@ -24,6 +24,7 @@ import com.tonyghouse.socialraven.dto.PostCollectionReviewActionRequest;
 import com.tonyghouse.socialraven.dto.PostCollectionReviewHistoryResponse;
 import com.tonyghouse.socialraven.dto.PostCollectionResponse;
 import com.tonyghouse.socialraven.dto.PostCollectionVersionResponse;
+import com.tonyghouse.socialraven.dto.PostAnalyticsSummaryResponse;
 import com.tonyghouse.socialraven.dto.PostMedia;
 import com.tonyghouse.socialraven.dto.PostResponse;
 import com.tonyghouse.socialraven.dto.ScheduleDraftRequest;
@@ -33,6 +34,7 @@ import com.tonyghouse.socialraven.entity.PostCollectionReviewHistoryEntity;
 import com.tonyghouse.socialraven.entity.PostCollectionVersionEntity;
 import com.tonyghouse.socialraven.entity.PostEntity;
 import com.tonyghouse.socialraven.entity.PostMediaEntity;
+import com.tonyghouse.socialraven.entity.WorkspacePostAnalyticsEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.helper.PostPoolHelper;
 import com.tonyghouse.socialraven.mapper.PostTypeMapper;
@@ -41,6 +43,7 @@ import com.tonyghouse.socialraven.repo.PostCollectionRepo;
 import com.tonyghouse.socialraven.repo.PostCollectionReviewHistoryRepo;
 import com.tonyghouse.socialraven.repo.PostMediaRepo;
 import com.tonyghouse.socialraven.repo.PostRepo;
+import com.tonyghouse.socialraven.repo.WorkspacePostAnalyticsRepo;
 import com.tonyghouse.socialraven.service.ClerkUserService;
 import com.tonyghouse.socialraven.service.account_profile.AccountProfileService;
 import com.tonyghouse.socialraven.service.storage.StorageService;
@@ -104,6 +107,9 @@ public class PostService {
 
     @Autowired
     private PostCollectionReviewHistoryRepo postCollectionReviewHistoryRepo;
+
+    @Autowired
+    private WorkspacePostAnalyticsRepo workspacePostAnalyticsRepo;
 
     @Autowired
     private StorageService storageService;
@@ -972,8 +978,19 @@ public class PostService {
                         )).toList()
                 : List.of();
 
+        Map<Long, WorkspacePostAnalyticsEntity> analyticsByPostId = posts != null && !posts.isEmpty()
+                ? workspacePostAnalyticsRepo.findAllByPostIdIn(
+                                posts.stream().map(PostEntity::getId).toList()
+                        ).stream()
+                        .collect(Collectors.toMap(
+                                WorkspacePostAnalyticsEntity::getPostId,
+                                analytics -> analytics,
+                                (left, right) -> right
+                        ))
+                : Map.of();
+
         List<PostResponse> postDtos = posts != null
-                ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap)).toList()
+                ? posts.stream().map(p -> getPostResponse(p, connectedAccountMap, analyticsByPostId.get(p.getId()))).toList()
                 : List.of();
 
         List<PostCollectionReviewHistoryResponse> reviewHistory = includeReviewHistory
@@ -1049,6 +1066,16 @@ public class PostService {
     }
 
     private PostResponse getPostResponse(PostEntity post, Map<String, ConnectedAccount> connectedAccountMap) {
+        return getPostResponse(
+                post,
+                connectedAccountMap,
+                workspacePostAnalyticsRepo.findByPostId(post.getId()).orElse(null)
+        );
+    }
+
+    private PostResponse getPostResponse(PostEntity post,
+                                         Map<String, ConnectedAccount> connectedAccountMap,
+                                         WorkspacePostAnalyticsEntity analytics) {
         PostCollectionEntity postCollection = post.getPostCollection();
         ConnectedAccount connectedAccount = connectedAccountMap.get(post.getProviderUserId());
         List<PostMediaEntity> mediaList = postCollection.getMediaFiles();
@@ -1073,7 +1100,29 @@ public class PostService {
                 post.getPostStatus().toString(),
                 post.getScheduledTime(),
                 mediaDtos,
-                connectedAccount
+                connectedAccount,
+                toAnalyticsSummary(analytics)
+        );
+    }
+
+    private PostAnalyticsSummaryResponse toAnalyticsSummary(WorkspacePostAnalyticsEntity analytics) {
+        if (analytics == null) {
+            return null;
+        }
+        return new PostAnalyticsSummaryResponse(
+                analytics.getFreshnessStatus() != null ? analytics.getFreshnessStatus().name() : null,
+                analytics.getLastCollectedAt(),
+                analytics.getImpressions(),
+                analytics.getReach(),
+                analytics.getLikes(),
+                analytics.getComments(),
+                analytics.getShares(),
+                analytics.getSaves(),
+                analytics.getClicks(),
+                analytics.getVideoViews(),
+                analytics.getWatchTimeMinutes(),
+                analytics.getEngagements(),
+                analytics.getEngagementRate()
         );
     }
 

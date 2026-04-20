@@ -31,6 +31,7 @@ import java.util.Map;
 public class InstagramOAuthService {
 
     private static final Logger log = LoggerFactory.getLogger(InstagramOAuthService.class);
+    private static final String GRAPH_BASE = "https://graph.instagram.com/v22.0";
 
     @Value("${instagram.app.id}")
     private String appId;
@@ -40,6 +41,9 @@ public class InstagramOAuthService {
 
     @Value("${instagram.redirect.uri}")
     private String redirectUri;
+
+    @Value("${instagram.webhook.subscribed-fields:comments,live_comments}")
+    private String webhookSubscribedFields;
 
     @Autowired
     private OAuthInfoRepo repo;
@@ -91,6 +95,7 @@ public class InstagramOAuthService {
         // IGAA tokens are already long-lived (60 days). The ig_exchange_token endpoint
         // is only for EAA/IGQVJ token formats.
         long expiresIn = 60L * 24 * 60 * 60; // 60 days in seconds
+        subscribeToWebhookFields(accessToken);
 
         long expiresAtMillis = System.currentTimeMillis() + expiresIn * 1000L;
         AdditionalOAuthInfo additionalOAuthInfo = new AdditionalOAuthInfo();
@@ -159,6 +164,28 @@ public class InstagramOAuthService {
 
         log.info("Instagram token refreshed successfully for OAuthInfo ID: {}", info.getId());
         return saved;
+    }
+
+    private void subscribeToWebhookFields(String accessToken) {
+        String subscribedFields = webhookSubscribedFields == null ? "" : webhookSubscribedFields.trim();
+        if (subscribedFields.isEmpty()) {
+            throw new RuntimeException("Instagram webhook subscribed fields are not configured");
+        }
+
+        String url = UriComponentsBuilder
+                .fromHttpUrl(GRAPH_BASE + "/me/subscribed_apps")
+                .queryParam("subscribed_fields", subscribedFields)
+                .queryParam("access_token", accessToken)
+                .build()
+                .encode()
+                .toUriString();
+
+        Map<String, Object> response = rest.postForObject(url, null, Map.class);
+        if (response == null || !Boolean.TRUE.equals(response.get("success"))) {
+            throw new RuntimeException("Instagram webhook subscription failed");
+        }
+
+        log.info("Instagram webhook subscription enabled for fields={}", subscribedFields);
     }
 
     public OAuthInfoEntity getValidOAuthInfo(OAuthInfoEntity info) {

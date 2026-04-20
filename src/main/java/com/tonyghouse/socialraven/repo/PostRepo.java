@@ -80,4 +80,32 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
             @Param("endTime") OffsetDateTime endTime,
             @Param("providerUserIds") List<String> providerUserIds
     );
+
+    @Query("""
+                select p
+                from PostEntity p
+                join p.postCollection pc
+                where pc.workspaceId = :workspaceId
+                  and p.provider = :provider
+                  and p.providerUserId = :providerUserId
+                  and p.providerPostId = :providerPostId
+            """)
+    List<PostEntity> findAllByWorkspaceIdAndProviderAndProviderUserIdAndProviderPostId(
+            @Param("workspaceId") String workspaceId,
+            @Param("provider") com.tonyghouse.socialraven.constant.Provider provider,
+            @Param("providerUserId") String providerUserId,
+            @Param("providerPostId") String providerPostId
+    );
+
+    @Query("""
+                select distinct p
+                from PostEntity p
+                join fetch p.postCollection pc
+                left join fetch pc.mediaFiles
+                where pc.workspaceId = :workspaceId
+                  and (p.postStatus = com.tonyghouse.socialraven.constant.PostStatus.PUBLISHED
+                       or p.providerPostId is not null)
+                order by p.scheduledTime desc
+            """)
+    List<PostEntity> findAnalyticsPostsByWorkspaceId(@Param("workspaceId") String workspaceId);
 }

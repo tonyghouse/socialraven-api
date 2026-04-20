@@ -26,6 +26,7 @@ import com.tonyghouse.socialraven.service.provider.FacebookOAuthService;
 import com.tonyghouse.socialraven.service.provider.InstagramOAuthService;
 import com.tonyghouse.socialraven.service.provider.LinkedInOAuthService;
 import com.tonyghouse.socialraven.service.provider.TikTokOAuthService;
+import com.tonyghouse.socialraven.service.provider.ThreadsOAuthService;
 import com.tonyghouse.socialraven.service.provider.XOAuthService;
 import com.tonyghouse.socialraven.service.provider.YouTubeOAuthService;
 import com.tonyghouse.socialraven.service.storage.StorageService;
@@ -62,6 +63,7 @@ public class ClientConnectionService {
             Platform.youtube,
             Platform.instagram,
             Platform.facebook,
+            Platform.threads,
             Platform.tiktok
     );
     private static final int MAX_MESSAGE_LENGTH = 4000;
@@ -100,6 +102,9 @@ public class ClientConnectionService {
 
     @Autowired
     private FacebookOAuthService facebookOAuthService;
+
+    @Autowired
+    private ThreadsOAuthService threadsOAuthService;
 
     @Autowired
     private XOAuthService xOAuthService;
@@ -218,6 +223,12 @@ public class ClientConnectionService {
                         actorEmail
                 );
                 case facebook -> facebookOAuthService.exchangeCodeForClientConnection(
+                        requireCode(request),
+                        resolved.session(),
+                        actorDisplayName,
+                        actorEmail
+                );
+                case threads -> threadsOAuthService.exchangeCodeForClientConnection(
                         requireCode(request),
                         resolved.session(),
                         actorDisplayName,

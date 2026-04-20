@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.http.HttpMethod.GET;
+import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -87,6 +88,12 @@ class FacebookOAuthServiceTest {
                         }
                         """, MediaType.APPLICATION_JSON));
 
+        server.expect(requestTo("https://graph.facebook.com/v22.0/page-987/subscribed_apps?subscribed_fields=feed"))
+                .andExpect(method(POST))
+                .andRespond(withSuccess("""
+                        {"success":true}
+                        """, MediaType.APPLICATION_JSON));
+
         service.handleCallback("oauth-code", "user_123");
 
         verify(persistenceService).saveWorkspaceMemberConnection(
@@ -146,6 +153,7 @@ class FacebookOAuthServiceTest {
         ReflectionTestUtils.setField(service, "appId", "facebook-app-id");
         ReflectionTestUtils.setField(service, "appSecret", "facebook-app-secret");
         ReflectionTestUtils.setField(service, "redirectUri", "https://app.socialraven.io/auth/facebook/callback");
+        ReflectionTestUtils.setField(service, "webhookSubscribedFields", "feed");
         ReflectionTestUtils.setField(service, "rest", restTemplate);
         ReflectionTestUtils.setField(service, "oauthConnectionPersistenceService", persistenceService);
         ReflectionTestUtils.setField(service, "repo", oauthInfoRepo);

@@ -3,9 +3,11 @@ package com.tonyghouse.socialraven.service.account_profile;
 import com.tonyghouse.socialraven.constant.Platform;
 import com.tonyghouse.socialraven.dto.ConnectedAccount;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
@@ -38,7 +40,7 @@ public class YouTubeProfileService {
 
             if (items == null || items.isEmpty()) {
                 log.error("YouTube: No channel data found");
-                return null;
+                return fallback(info);
             }
 
             Map<String, Object> snippet =
@@ -52,14 +54,14 @@ public class YouTubeProfileService {
             ConnectedAccount dto = new ConnectedAccount();
             dto.setProviderUserId(info.getProviderUserId());
             dto.setPlatform(Platform.youtube);
-            dto.setUsername(title);
-            dto.setProfilePicLink(profilePic);
+            dto.setUsername(StringUtils.hasText(title) ? title : fallbackTitle(info));
+            dto.setProfilePicLink(StringUtils.hasText(profilePic) ? profilePic : fallbackProfilePic(info));
 
             return dto;
 
         } catch (Exception e) {
             log.error("YouTube Profile Fetch Failed: {}", e.getMessage(), e);
-            return null;
+            return fallback(info);
         }
     }
 
@@ -79,5 +81,30 @@ public class YouTubeProfileService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private ConnectedAccount fallback(OAuthInfoEntity info) {
+        ConnectedAccount dto = new ConnectedAccount();
+        dto.setProviderUserId(info.getProviderUserId());
+        dto.setPlatform(Platform.youtube);
+        dto.setUsername(fallbackTitle(info));
+        dto.setProfilePicLink(fallbackProfilePic(info));
+        return dto;
+    }
+
+    private String fallbackTitle(OAuthInfoEntity info) {
+        AdditionalOAuthInfo additionalInfo = info.getAdditionalInfo();
+        if (additionalInfo != null && StringUtils.hasText(additionalInfo.getYoutubeChannelTitle())) {
+            return additionalInfo.getYoutubeChannelTitle();
+        }
+        return info.getProviderUserId();
+    }
+
+    private String fallbackProfilePic(OAuthInfoEntity info) {
+        AdditionalOAuthInfo additionalInfo = info.getAdditionalInfo();
+        if (additionalInfo != null && StringUtils.hasText(additionalInfo.getYoutubeChannelThumbnailUrl())) {
+            return additionalInfo.getYoutubeChannelThumbnailUrl();
+        }
+        return null;
     }
 }

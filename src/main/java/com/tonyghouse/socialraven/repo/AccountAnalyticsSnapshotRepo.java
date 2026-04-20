@@ -13,6 +13,12 @@ import java.util.List;
 @Repository
 public interface AccountAnalyticsSnapshotRepo extends JpaRepository<AccountAnalyticsSnapshotEntity, Long> {
 
+    List<AccountAnalyticsSnapshotEntity> findAllByWorkspaceId(String workspaceId);
+
+    long countByWorkspaceId(String workspaceId);
+
+    long countByWorkspaceIdAndProviderUserIdIn(String workspaceId, List<String> providerUserIds);
+
     List<AccountAnalyticsSnapshotEntity> findByProviderUserIdAndProviderAndSnapshotDateBetweenOrderBySnapshotDateAsc(
             String providerUserId, String provider, LocalDate from, LocalDate to);
 

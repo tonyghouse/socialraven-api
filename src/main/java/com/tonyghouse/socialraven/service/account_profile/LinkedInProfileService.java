@@ -1,80 +1,111 @@
 package com.tonyghouse.socialraven.service.account_profile;
 
+import com.tonyghouse.socialraven.constant.LinkedInAccountType;
+import com.tonyghouse.socialraven.constant.LinkedInApiConstants;
 import com.tonyghouse.socialraven.constant.Platform;
 import com.tonyghouse.socialraven.dto.ConnectedAccount;
 import com.tonyghouse.socialraven.entity.OAuthInfoEntity;
+import com.tonyghouse.socialraven.model.AdditionalOAuthInfo;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.List;
-import java.util.Map;
 
 @Service
 @Slf4j
 public class LinkedInProfileService {
 
+    private static final String USER_INFO_URL = "https://api.linkedin.com/v2/userinfo";
 
     private final RestTemplate rest = new RestTemplate();
 
     public ConnectedAccount fetchProfile(OAuthInfoEntity info) {
+        AdditionalOAuthInfo additionalInfo = info.getAdditionalInfo();
+        if (isOrganizationConnection(additionalInfo)) {
+            return buildOrganizationProfile(info, additionalInfo);
+        }
 
         try {
-
-            String url = "https://api.linkedin.com/v2/userinfo";
-
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(info.getAccessToken());
+            headers.set("Linkedin-Version", LinkedInApiConstants.API_VERSION);
+            headers.set("X-RestLi-Protocol-Version", LinkedInApiConstants.RESTLI_PROTOCOL_VERSION);
 
             ResponseEntity<Map> response = rest.exchange(
-                    url,
+                    USER_INFO_URL,
                     HttpMethod.GET,
                     new HttpEntity<>(headers),
                     Map.class
             );
 
             Map body = response.getBody();
+            if (body == null) {
+                return buildFallbackProfile(info, additionalInfo);
+            }
 
             ConnectedAccount dto = new ConnectedAccount();
             dto.setProviderUserId(info.getProviderUserId());
             dto.setPlatform(Platform.linkedin);
-            dto.setUsername((String) body.get("name"));
-            dto.setProfilePicLink((String) body.get("picture"));  // already provided
+            dto.setUsername(resolveDisplayName((String) body.get("name"), info.getProviderUserId()));
+            dto.setProfilePicLink((String) body.get("picture"));
             return dto;
 
-
         } catch (Exception exp) {
-            log.error("LinkedIn Profile fetching Failed: {}", exp.getMessage(), exp);
-            return null;
+            log.warn("LinkedIn profile fetching failed for providerUserId={}: {}", info.getProviderUserId(), exp.getMessage());
+            return buildFallbackProfile(info, additionalInfo);
         }
     }
 
-    /**
-     * Extracts the best profile picture URL from LinkedIn playableStreams format.
-     */
-    private String extractProfilePic(Map profile) {
-        try {
-            Map picture = (Map) profile.get("profilePicture");
-            Map displayImage = (Map) picture.get("displayImage~");
-            List elements = (List) displayImage.get("elements");
+    private ConnectedAccount buildOrganizationProfile(OAuthInfoEntity info, AdditionalOAuthInfo additionalInfo) {
+        ConnectedAccount dto = new ConnectedAccount();
+        dto.setProviderUserId(info.getProviderUserId());
+        dto.setPlatform(Platform.linkedin);
+        dto.setUsername(resolveDisplayName(
+                additionalInfo.getLinkedinOrganizationName(),
+                info.getProviderUserId()
+        ));
+        dto.setProfilePicLink(normalizeLogoUrl(additionalInfo.getLinkedinOrganizationLogoUrl()));
+        return dto;
+    }
 
-            if (elements == null || elements.isEmpty()) return null;
+    private ConnectedAccount buildFallbackProfile(OAuthInfoEntity info, AdditionalOAuthInfo additionalInfo) {
+        ConnectedAccount dto = new ConnectedAccount();
+        dto.setProviderUserId(info.getProviderUserId());
+        dto.setPlatform(Platform.linkedin);
 
-            // Usually the highest resolution is the last element
-            Map element = (Map) elements.get(elements.size() - 1);
-            List identifiers = (List) element.get("identifiers");
-
-            if (identifiers == null || identifiers.isEmpty()) return null;
-
-            Map identifier = (Map) identifiers.get(0);
-            return (String) identifier.get("identifier");
-
-        } catch (Exception e) {
-            return null;
+        if (isOrganizationConnection(additionalInfo)) {
+            dto.setUsername(resolveDisplayName(
+                    additionalInfo.getLinkedinOrganizationName(),
+                    info.getProviderUserId()
+            ));
+            dto.setProfilePicLink(normalizeLogoUrl(additionalInfo.getLinkedinOrganizationLogoUrl()));
+            return dto;
         }
+
+        dto.setUsername(resolveDisplayName(
+                additionalInfo != null ? additionalInfo.getLinkedinMemberName() : null,
+                info.getProviderUserId()
+        ));
+        dto.setProfilePicLink(null);
+        return dto;
+    }
+
+    private boolean isOrganizationConnection(AdditionalOAuthInfo additionalInfo) {
+        return additionalInfo != null
+                && LinkedInAccountType.ORGANIZATION.equals(additionalInfo.getLinkedinAccountType())
+                && StringUtils.hasText(additionalInfo.getLinkedinOrganizationUrn());
+    }
+
+    private String normalizeLogoUrl(String value) {
+        return value != null && value.startsWith("http") ? value : null;
+    }
+
+    private String resolveDisplayName(String candidate, String fallback) {
+        return StringUtils.hasText(candidate) ? candidate : fallback;
     }
 }
