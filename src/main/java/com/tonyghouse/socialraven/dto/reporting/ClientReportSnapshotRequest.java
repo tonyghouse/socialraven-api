@@ -4,7 +4,7 @@ import java.time.OffsetDateTime;
 import lombok.Data;
 
 @Data
-public class CreateClientReportLinkRequest {
+public class ClientReportSnapshotRequest {
     private String reportTitle;
     private String clientLabel;
     private String agencyLabel;
@@ -14,6 +14,4 @@ public class CreateClientReportLinkRequest {
     private Integer reportDays;
     private String commentary;
     private OffsetDateTime expiresAt;
-    private String recipientName;
-    private String recipientEmail;
 }

@@ -2,10 +2,9 @@ package com.tonyghouse.socialraven.service.reporting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.tonyghouse.socialraven.dto.analytics.AnalyticsOverviewResponse;
-import com.tonyghouse.socialraven.dto.analytics.PlatformStatsResponse;
-import com.tonyghouse.socialraven.dto.analytics.TimelinePointResponse;
-import com.tonyghouse.socialraven.dto.analytics.TopPostResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportPlatformPerformanceResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportSummaryResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportTopPostResponse;
 import com.tonyghouse.socialraven.dto.reporting.PublicClientReportResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -27,6 +26,10 @@ class ClientReportPdfServiceTest {
                 "EXECUTIVE_SUMMARY",
                 30,
                 "Last 30 days",
+                "WORKSPACE",
+                "Workspace",
+                null,
+                null,
                 "Performance held steady with stronger engagement on LinkedIn and Instagram.",
                 List.of(
                         "Delivered 18,000 impressions and 495 engagements across the selected report window.",
@@ -34,28 +37,49 @@ class ClientReportPdfServiceTest {
                 ),
                 OffsetDateTime.parse("2026-04-04T08:00:00Z"),
                 OffsetDateTime.parse("2026-04-18T08:00:00Z"),
-                new AnalyticsOverviewResponse(18000, 12000, 401, 66, 28, 0, 124, 19, 4.12),
-                List.of(
-                        new PlatformStatsResponse("INSTAGRAM", 11000, 8000, 280, 44, 19, 0, 0, 91, 11, 4.17),
-                        new PlatformStatsResponse("LINKEDIN", 7000, 4000, 121, 22, 9, 0, 0, 33, 8, 3.44)
+                new ClientReportSummaryResponse(
+                        "Last 30 days",
+                        OffsetDateTime.parse("2026-04-01T00:00:00Z"),
+                        OffsetDateTime.parse("2026-04-30T23:59:59Z"),
+                        18000,
+                        401,
+                        4.12,
+                        55,
+                        0,
+                        19
                 ),
                 List.of(
-                        new TopPostResponse(
+                        new ClientReportPlatformPerformanceResponse("INSTAGRAM", "Instagram", 11, 280, 11000, 25.4, 57.9, 69.8, 61.1),
+                        new ClientReportPlatformPerformanceResponse("LINKEDIN", "LinkedIn", 8, 121, 7000, 15.1, 42.1, 30.2, 38.9)
+                ),
+                List.of(
+                        new ClientReportTopPostResponse(
                                 91L,
                                 "INSTAGRAM",
-                                "insta_91",
+                                "Instagram",
+                                "Orbit Foods",
+                                null,
+                                null,
                                 "A concise campaign clip that outperformed the rest of the month.",
+                                "VIDEO",
+                                "SHORT_VIDEO",
                                 OffsetDateTime.parse("2026-04-02T09:00:00Z"),
-                                "T30D",
-                                6100,
-                                4800,
-                                210,
-                                31,
-                                14,
+                                6100L,
+                                4800L,
+                                210L,
+                                31L,
+                                14L,
+                                0L,
+                                0L,
+                                0L,
+                                0L,
+                                255L,
                                 4.18
                         )
                 ),
-                List.of(new TimelinePointResponse("2026-04-02", "INSTAGRAM", 82L))
+                List.of(),
+                null,
+                null
         );
 
         byte[] pdf = service.render(report);

@@ -4,8 +4,10 @@ import com.tonyghouse.socialraven.annotation.RequiresRole;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
 import com.tonyghouse.socialraven.dto.reporting.ClientReportLinkResponse;
 import com.tonyghouse.socialraven.dto.reporting.ClientReportScheduleResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportSnapshotRequest;
 import com.tonyghouse.socialraven.dto.reporting.CreateClientReportLinkRequest;
 import com.tonyghouse.socialraven.dto.reporting.CreateClientReportScheduleRequest;
+import com.tonyghouse.socialraven.dto.reporting.PublicClientReportResponse;
 import com.tonyghouse.socialraven.service.reporting.ClientReportService;
 import com.tonyghouse.socialraven.util.SecurityContextUtil;
 import java.util.List;
@@ -26,6 +28,13 @@ public class ClientReportController {
 
     @Autowired
     private ClientReportService clientReportService;
+
+    @RequiresRole(WorkspaceRole.EDITOR)
+    @PostMapping("/snapshot")
+    public PublicClientReportResponse getSnapshot(@RequestBody(required = false) ClientReportSnapshotRequest request) {
+        String userId = SecurityContextUtil.getUserId(SecurityContextHolder.getContext());
+        return clientReportService.getSnapshot(userId, request);
+    }
 
     @RequiresRole(WorkspaceRole.EDITOR)
     @GetMapping("/links")

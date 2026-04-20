@@ -1,29 +1,52 @@
 package com.tonyghouse.socialraven.service.reporting;
 
 import com.tonyghouse.socialraven.constant.ClientReportCadence;
+import com.tonyghouse.socialraven.constant.ClientReportScope;
 import com.tonyghouse.socialraven.constant.ClientReportTemplate;
+import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.constant.WorkspaceCapability;
 import com.tonyghouse.socialraven.constant.WorkspaceRole;
-import com.tonyghouse.socialraven.dto.analytics.AnalyticsOverviewResponse;
-import com.tonyghouse.socialraven.dto.analytics.PlatformStatsResponse;
-import com.tonyghouse.socialraven.dto.analytics.TimelinePointResponse;
-import com.tonyghouse.socialraven.dto.analytics.TopPostResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsBreakdownResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsBreakdownRowResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsCampaignDrilldownResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsDrilldownContributionResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsForecastPanelResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsForecastRangeResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsOverviewMetricResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsPostRankingsResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsPostRowResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsTrendExplorerPointResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsTrendExplorerResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsWorkspaceOverviewResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportCampaignInsightResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportContributionResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportContributionRowResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportForecastItemResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportForecastRangeResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportForecastSummaryResponse;
 import com.tonyghouse.socialraven.dto.reporting.ClientReportLinkResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportPlatformPerformanceResponse;
 import com.tonyghouse.socialraven.dto.reporting.ClientReportScheduleResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportSnapshotRequest;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportSummaryResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportTopPostResponse;
+import com.tonyghouse.socialraven.dto.reporting.ClientReportTrendPointResponse;
 import com.tonyghouse.socialraven.dto.reporting.CreateClientReportLinkRequest;
 import com.tonyghouse.socialraven.dto.reporting.CreateClientReportScheduleRequest;
 import com.tonyghouse.socialraven.dto.reporting.PublicClientReportResponse;
 import com.tonyghouse.socialraven.entity.CompanyEntity;
+import com.tonyghouse.socialraven.entity.PostCollectionEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceClientReportLinkEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceClientReportScheduleEntity;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.repo.CompanyRepo;
+import com.tonyghouse.socialraven.repo.PostCollectionRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceClientReportLinkRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceClientReportScheduleRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.EmailService;
-import com.tonyghouse.socialraven.service.analytics.AnalyticsApiService;
+import com.tonyghouse.socialraven.service.analytics.AnalyticsWorkspaceService;
 import com.tonyghouse.socialraven.service.storage.StorageService;
 import com.tonyghouse.socialraven.service.workspace.WorkspaceCapabilityService;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
@@ -33,8 +56,10 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.function.Supplier;
@@ -45,6 +70,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 @Service
 public class ClientReportService {
@@ -58,6 +84,9 @@ public class ClientReportService {
     private static final int DEFAULT_SHARE_EXPIRY_HOURS = 24 * 14;
     private static final int MAX_SHARE_EXPIRY_HOURS = 24 * 31;
     private static final int DEFAULT_REPORT_HOUR_UTC = 8;
+    private static final int DEFAULT_FORECAST_DAYS = 7;
+    private static final int DEFAULT_FORECAST_PLANNED_POSTS = 3;
+    private static final String DEFAULT_REPORT_METRIC = "engagements";
 
     @Autowired
     private WorkspaceClientReportLinkRepo workspaceClientReportLinkRepo;
@@ -72,13 +101,16 @@ public class ClientReportService {
     private ClientReportTokenService clientReportTokenService;
 
     @Autowired
-    private AnalyticsApiService analyticsApiService;
+    private AnalyticsWorkspaceService analyticsWorkspaceService;
 
     @Autowired
     private WorkspaceRepo workspaceRepo;
 
     @Autowired
     private CompanyRepo companyRepo;
+
+    @Autowired
+    private PostCollectionRepo postCollectionRepo;
 
     @Autowired
     private StorageService storageService;
@@ -91,6 +123,35 @@ public class ClientReportService {
 
     @Value("${socialraven.app.base-url:https://socialraven.io}")
     private String appBaseUrl;
+
+    @Transactional(readOnly = true)
+    public PublicClientReportResponse getSnapshot(String userId, ClientReportSnapshotRequest request) {
+        String workspaceId = WorkspaceContext.getWorkspaceId();
+        WorkspaceRole role = WorkspaceContext.getRole();
+        assertCanExportClientReports(workspaceId, userId, role);
+
+        WorkspaceSnapshot snapshot = loadWorkspaceSnapshot(workspaceId);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        ReportDefinition report = buildReportDefinition(
+                snapshot,
+                request != null ? request.getReportTitle() : null,
+                request != null ? request.getClientLabel() : null,
+                request != null ? request.getAgencyLabel() : null,
+                request != null ? request.getReportScope() : null,
+                request != null ? request.getCampaignId() : null,
+                request != null ? request.getTemplateType() : null,
+                request != null ? request.getReportDays() : null,
+                request != null ? request.getCommentary() : null,
+                true
+        );
+
+        return buildReportSnapshot(
+                report,
+                snapshot,
+                normalizeLinkExpiry(request != null ? request.getExpiresAt() : null, now),
+                now
+        );
+    }
 
     @Transactional(readOnly = true)
     public List<ClientReportLinkResponse> getLinks(String userId) {
@@ -111,16 +172,24 @@ public class ClientReportService {
 
         WorkspaceSnapshot snapshot = loadWorkspaceSnapshot(workspaceId);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        ReportDefinition report = buildReportDefinition(
+                snapshot,
+                request != null ? request.getReportTitle() : null,
+                request != null ? request.getClientLabel() : null,
+                request != null ? request.getAgencyLabel() : null,
+                request != null ? request.getReportScope() : null,
+                request != null ? request.getCampaignId() : null,
+                request != null ? request.getTemplateType() : null,
+                request != null ? request.getReportDays() : null,
+                request != null ? request.getCommentary() : null,
+                true
+        );
+
         WorkspaceClientReportLinkEntity link = buildLinkEntity(
                 snapshot,
                 userId,
                 null,
-                request != null ? request.getReportTitle() : null,
-                request != null ? request.getClientLabel() : null,
-                request != null ? request.getAgencyLabel() : null,
-                request != null ? request.getTemplateType() : null,
-                request != null ? request.getReportDays() : null,
-                request != null ? request.getCommentary() : null,
+                report,
                 request != null ? request.getRecipientName() : null,
                 request != null ? request.getRecipientEmail() : null,
                 normalizeLinkExpiry(request != null ? request.getExpiresAt() : null, now),
@@ -169,7 +238,6 @@ public class ClientReportService {
         WorkspaceSnapshot snapshot = loadWorkspaceSnapshot(workspaceId);
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         ClientReportCadence cadence = normalizeCadence(request != null ? request.getCadence() : null);
-        Integer reportDays = normalizeReportDays(request != null ? request.getReportDays() : null);
         Integer hourOfDayUtc = normalizeHourOfDay(request != null ? request.getHourOfDayUtc() : null);
         Integer shareExpiryHours = normalizeShareExpiryHours(request != null ? request.getShareExpiryHours() : null);
         Integer dayOfWeek = cadence == ClientReportCadence.WEEKLY
@@ -178,28 +246,32 @@ public class ClientReportService {
         Integer dayOfMonth = cadence == ClientReportCadence.MONTHLY
                 ? normalizeDayOfMonth(request != null ? request.getDayOfMonth() : null, now)
                 : null;
+        ReportDefinition report = buildReportDefinition(
+                snapshot,
+                request != null ? request.getReportTitle() : null,
+                request != null ? request.getClientLabel() : null,
+                request != null ? request.getAgencyLabel() : null,
+                request != null ? request.getReportScope() : null,
+                request != null ? request.getCampaignId() : null,
+                request != null ? request.getTemplateType() : null,
+                request != null ? request.getReportDays() : null,
+                request != null ? request.getCommentary() : null,
+                true
+        );
 
         WorkspaceClientReportScheduleEntity schedule = new WorkspaceClientReportScheduleEntity();
         schedule.setWorkspaceId(workspaceId);
         schedule.setCreatedByUserId(userId);
-        schedule.setReportTitle(normalizeReportTitle(
-                request != null ? request.getReportTitle() : null,
-                snapshot.workspace(),
-                reportDays
-        ));
+        schedule.setReportTitle(report.reportTitle());
         schedule.setRecipientName(normalizeOptionalText(request != null ? request.getRecipientName() : null, 255));
         schedule.setRecipientEmail(normalizeEmail(request != null ? request.getRecipientEmail() : null, true));
-        schedule.setClientLabel(normalizeOptionalText(
-                request != null ? request.getClientLabel() : snapshot.workspace().getName(),
-                255
-        ));
-        schedule.setAgencyLabel(normalizeOptionalText(
-                request != null ? request.getAgencyLabel() : snapshot.companyName(),
-                255
-        ));
-        schedule.setTemplateType(normalizeTemplate(request != null ? request.getTemplateType() : null));
-        schedule.setReportDays(reportDays);
-        schedule.setCommentary(normalizeOptionalText(request != null ? request.getCommentary() : null, 4000));
+        schedule.setClientLabel(report.clientLabel());
+        schedule.setAgencyLabel(report.agencyLabel());
+        schedule.setReportScope(report.target().scope());
+        schedule.setCampaignId(report.target().campaignId());
+        schedule.setTemplateType(report.template());
+        schedule.setReportDays(report.reportDays());
+        schedule.setCommentary(report.commentary());
         schedule.setCadence(cadence);
         schedule.setDayOfWeek(dayOfWeek);
         schedule.setDayOfMonth(dayOfMonth);
@@ -238,21 +310,46 @@ public class ClientReportService {
     public PublicClientReportResponse getPublicReport(String token) {
         ResolvedClientReportLink resolved = resolvePublicLink(token);
         markLastAccessed(resolved.link());
-        return buildPublicReport(resolved.link(), resolved.workspaceSnapshot(), resolved.tokenExpiresAt());
+        ReportDefinition report = buildReportDefinition(
+                resolved.workspaceSnapshot(),
+                resolved.link().getReportTitle(),
+                resolved.link().getClientLabel(),
+                resolved.link().getAgencyLabel(),
+                safeReportScope(resolved.link().getReportScope()).name(),
+                resolved.link().getCampaignId(),
+                resolved.link().getTemplateType() != null ? resolved.link().getTemplateType().name() : null,
+                resolved.link().getReportDays(),
+                resolved.link().getCommentary(),
+                false
+        );
+        return buildReportSnapshot(report, resolved.workspaceSnapshot(), resolved.tokenExpiresAt(), OffsetDateTime.now(ZoneOffset.UTC));
     }
 
     @Transactional
     public ClientReportPdfDocument getPublicReportPdf(String token) {
         ResolvedClientReportLink resolved = resolvePublicLink(token);
         markLastAccessed(resolved.link());
-        PublicClientReportResponse report = buildPublicReport(
-                resolved.link(),
+        ReportDefinition report = buildReportDefinition(
                 resolved.workspaceSnapshot(),
-                resolved.tokenExpiresAt()
+                resolved.link().getReportTitle(),
+                resolved.link().getClientLabel(),
+                resolved.link().getAgencyLabel(),
+                safeReportScope(resolved.link().getReportScope()).name(),
+                resolved.link().getCampaignId(),
+                resolved.link().getTemplateType() != null ? resolved.link().getTemplateType().name() : null,
+                resolved.link().getReportDays(),
+                resolved.link().getCommentary(),
+                false
+        );
+        PublicClientReportResponse snapshot = buildReportSnapshot(
+                report,
+                resolved.workspaceSnapshot(),
+                resolved.tokenExpiresAt(),
+                OffsetDateTime.now(ZoneOffset.UTC)
         );
         return new ClientReportPdfDocument(
-                clientReportPdfService.render(report),
-                buildPdfFileName(report)
+                clientReportPdfService.render(snapshot),
+                buildPdfFileName(snapshot)
         );
     }
 
@@ -273,16 +370,23 @@ public class ClientReportService {
 
     private void deliverScheduledReport(WorkspaceClientReportScheduleEntity schedule, OffsetDateTime now) {
         WorkspaceSnapshot snapshot = loadWorkspaceSnapshot(schedule.getWorkspaceId());
+        ReportDefinition report = buildReportDefinition(
+                snapshot,
+                schedule.getReportTitle(),
+                schedule.getClientLabel(),
+                schedule.getAgencyLabel(),
+                safeReportScope(schedule.getReportScope()).name(),
+                schedule.getCampaignId(),
+                schedule.getTemplateType() != null ? schedule.getTemplateType().name() : null,
+                schedule.getReportDays(),
+                schedule.getCommentary(),
+                false
+        );
         WorkspaceClientReportLinkEntity link = buildLinkEntity(
                 snapshot,
                 schedule.getCreatedByUserId(),
                 schedule.getId(),
-                schedule.getReportTitle(),
-                schedule.getClientLabel(),
-                schedule.getAgencyLabel(),
-                schedule.getTemplateType() != null ? schedule.getTemplateType().name() : null,
-                schedule.getReportDays(),
-                schedule.getCommentary(),
+                report,
                 schedule.getRecipientName(),
                 schedule.getRecipientEmail(),
                 now.plusHours(schedule.getShareExpiryHours()),
@@ -323,56 +427,135 @@ public class ClientReportService {
         );
     }
 
-    private PublicClientReportResponse buildPublicReport(WorkspaceClientReportLinkEntity link,
-                                                         WorkspaceSnapshot snapshot,
-                                                         OffsetDateTime tokenExpiresAt) {
-        AnalyticsOverviewResponse overview = withWorkspaceContext(snapshot.workspace().getId(),
-                () -> analyticsApiService.getOverview("client-report", link.getReportDays()));
-        List<PlatformStatsResponse> platformStats = withWorkspaceContext(snapshot.workspace().getId(),
-                () -> analyticsApiService.getPlatformStats("client-report", link.getReportDays()));
-        List<TopPostResponse> topPosts = withWorkspaceContext(snapshot.workspace().getId(),
-                () -> analyticsApiService.getTopPosts("client-report", link.getReportDays(), resolveSnapshotType(link.getReportDays())));
-        List<TimelinePointResponse> timeline = withWorkspaceContext(snapshot.workspace().getId(),
-                () -> analyticsApiService.getTimeline("client-report", link.getReportDays()));
+    private PublicClientReportResponse buildReportSnapshot(ReportDefinition report,
+                                                           WorkspaceSnapshot snapshot,
+                                                           OffsetDateTime linkExpiresAt,
+                                                           OffsetDateTime generatedAt) {
+        Long campaignId = report.target().scope() == ClientReportScope.CAMPAIGN
+                ? report.target().campaignId()
+                : null;
+        AnalyticsWorkspaceOverviewResponse overview = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getOverview(report.reportDays(), null, null, campaignId, null)
+        );
+        AnalyticsTrendExplorerResponse trend = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getTrendExplorer(
+                        report.reportDays(),
+                        null,
+                        null,
+                        campaignId,
+                        null,
+                        DEFAULT_REPORT_METRIC
+                )
+        );
+        AnalyticsBreakdownResponse platformEngagementBreakdown = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getBreakdownEngine(
+                        report.reportDays(),
+                        null,
+                        null,
+                        campaignId,
+                        null,
+                        "platform",
+                        DEFAULT_REPORT_METRIC
+                )
+        );
+        AnalyticsBreakdownResponse platformImpressionBreakdown = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getBreakdownEngine(
+                        report.reportDays(),
+                        null,
+                        null,
+                        campaignId,
+                        null,
+                        "platform",
+                        "impressions"
+                )
+        );
+        AnalyticsPostRankingsResponse rankings = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getPostRankings(
+                        report.reportDays(),
+                        null,
+                        null,
+                        campaignId,
+                        null,
+                        DEFAULT_REPORT_METRIC,
+                        5
+                )
+        );
+        AnalyticsForecastPanelResponse forecast = withWorkspaceContext(
+                snapshot.workspace().getId(),
+                () -> analyticsWorkspaceService.getForecastPanel(
+                        report.reportDays(),
+                        null,
+                        null,
+                        campaignId,
+                        null,
+                        DEFAULT_REPORT_METRIC,
+                        DEFAULT_FORECAST_DAYS,
+                        DEFAULT_FORECAST_PLANNED_POSTS
+                )
+        );
+        AnalyticsCampaignDrilldownResponse campaignDrilldown = report.target().scope() == ClientReportScope.CAMPAIGN
+                ? loadCampaignDrilldown(snapshot.workspace().getId(), report.reportDays(), report.target().campaignId())
+                : null;
 
-        List<PlatformStatsResponse> sortedPlatforms = platformStats.stream()
-                .sorted(Comparator.comparingLong(PlatformStatsResponse::getImpressions).reversed())
+        ClientReportSummaryResponse summary = buildSummary(overview);
+        List<ClientReportPlatformPerformanceResponse> platformPerformance =
+                buildPlatformPerformance(platformEngagementBreakdown, platformImpressionBreakdown);
+        List<ClientReportTopPostResponse> topPosts = rankings.getTopPosts().stream()
+                .map(this::toTopPostResponse)
                 .toList();
-        List<TopPostResponse> trimmedTopPosts = topPosts.stream().limit(5).toList();
-        String reportWindowLabel = "Last " + link.getReportDays() + " days";
+        List<ClientReportTrendPointResponse> trendPoints = trend.getDaily().stream()
+                .map(this::toTrendPointResponse)
+                .toList();
+        ClientReportForecastSummaryResponse forecastSummary = buildForecastSummary(forecast);
+        ClientReportCampaignInsightResponse campaignInsight = buildCampaignInsight(report.target(), campaignDrilldown);
+        String reportWindowLabel = buildReportWindowLabel(overview, report.reportDays());
         String commentary = normalizePublicCommentary(
-                link.getCommentary(),
-                link.getTemplateType(),
-                overview,
-                sortedPlatforms,
-                reportWindowLabel
+                report.commentary(),
+                report.template(),
+                summary,
+                platformPerformance,
+                topPosts,
+                forecastSummary,
+                reportWindowLabel,
+                report.target()
         );
 
         return new PublicClientReportResponse(
-                link.getReportTitle(),
-                defaultIfBlank(link.getClientLabel(), snapshot.workspace().getName()),
-                defaultIfBlank(link.getAgencyLabel(), snapshot.companyName()),
+                report.reportTitle(),
+                report.clientLabel(),
+                report.agencyLabel(),
                 snapshot.workspace().getName(),
                 snapshot.companyName(),
                 resolveLogoUrl(snapshot),
-                link.getTemplateType().name(),
-                link.getReportDays(),
+                report.template().name(),
+                report.reportDays(),
                 reportWindowLabel,
+                report.target().scope().name(),
+                reportScopeLabel(report.target().scope()),
+                report.target().campaignId(),
+                report.target().campaignLabel(),
                 commentary,
-                buildHighlights(link, overview, sortedPlatforms, trimmedTopPosts, reportWindowLabel),
-                OffsetDateTime.now(ZoneOffset.UTC),
-                tokenExpiresAt,
-                overview,
-                sortedPlatforms,
-                trimmedTopPosts,
-                timeline
+                buildHighlights(report, summary, platformPerformance, topPosts, forecastSummary, campaignInsight, reportWindowLabel),
+                generatedAt,
+                linkExpiresAt,
+                summary,
+                platformPerformance,
+                topPosts,
+                trendPoints,
+                forecastSummary,
+                campaignInsight
         );
     }
 
     private void sendReportLinkEmailIfNeeded(WorkspaceClientReportLinkEntity link,
                                              WorkspaceSnapshot snapshot,
                                              OffsetDateTime generatedAt) {
-        if (link.getRecipientEmail() == null || link.getRecipientEmail().isBlank()) {
+        if (!StringUtils.hasText(link.getRecipientEmail())) {
             return;
         }
         sendReportLinkEmail(link, snapshot, generatedAt);
@@ -381,52 +564,54 @@ public class ClientReportService {
     private void sendReportLinkEmail(WorkspaceClientReportLinkEntity link,
                                      WorkspaceSnapshot snapshot,
                                      OffsetDateTime generatedAt) {
-        PublicClientReportResponse report = buildPublicReport(link, snapshot, link.getExpiresAt());
+        ReportDefinition report = buildReportDefinition(
+                snapshot,
+                link.getReportTitle(),
+                link.getClientLabel(),
+                link.getAgencyLabel(),
+                safeReportScope(link.getReportScope()).name(),
+                link.getCampaignId(),
+                link.getTemplateType() != null ? link.getTemplateType().name() : null,
+                link.getReportDays(),
+                link.getCommentary(),
+                false
+        );
+        PublicClientReportResponse snapshotReport = buildReportSnapshot(report, snapshot, link.getExpiresAt(), generatedAt);
         String reportUrl = snapshot.baseUrl() + "/reports/" + clientReportTokenService.generateToken(link.getId(), link.getExpiresAt());
         emailService.sendClientReportEmail(
                 link.getRecipientEmail(),
                 link.getRecipientName(),
                 link.getReportTitle(),
-                defaultIfBlank(link.getClientLabel(), snapshot.workspace().getName()),
-                defaultIfBlank(link.getAgencyLabel(), snapshot.companyName()),
-                report.getReportWindowLabel(),
+                snapshotReport.getClientLabel(),
+                snapshotReport.getAgencyLabel(),
+                snapshotReport.getReportWindowLabel(),
                 reportUrl,
-                report.getHighlights(),
-                buildEmailCommentary(report.getCommentary(), generatedAt)
+                snapshotReport.getHighlights(),
+                buildEmailCommentary(snapshotReport.getCommentary(), generatedAt)
         );
     }
 
     private WorkspaceClientReportLinkEntity buildLinkEntity(WorkspaceSnapshot snapshot,
                                                             String createdByUserId,
                                                             Long scheduleId,
-                                                            String reportTitle,
-                                                            String clientLabel,
-                                                            String agencyLabel,
-                                                            String templateType,
-                                                            Integer reportDays,
-                                                            String commentary,
+                                                            ReportDefinition report,
                                                             String recipientName,
                                                             String recipientEmail,
                                                             OffsetDateTime expiresAt,
                                                             OffsetDateTime now) {
-        Integer normalizedReportDays = normalizeReportDays(reportDays);
         WorkspaceClientReportLinkEntity link = new WorkspaceClientReportLinkEntity();
         link.setId(java.util.UUID.randomUUID().toString());
         link.setWorkspaceId(snapshot.workspace().getId());
         link.setCreatedByUserId(createdByUserId);
         link.setScheduleId(scheduleId);
-        link.setReportTitle(normalizeReportTitle(reportTitle, snapshot.workspace(), normalizedReportDays));
-        link.setClientLabel(normalizeOptionalText(
-                clientLabel != null ? clientLabel : snapshot.workspace().getName(),
-                255
-        ));
-        link.setAgencyLabel(normalizeOptionalText(
-                agencyLabel != null ? agencyLabel : snapshot.companyName(),
-                255
-        ));
-        link.setTemplateType(normalizeTemplate(templateType));
-        link.setReportDays(normalizedReportDays);
-        link.setCommentary(normalizeOptionalText(commentary, 4000));
+        link.setReportTitle(report.reportTitle());
+        link.setClientLabel(report.clientLabel());
+        link.setAgencyLabel(report.agencyLabel());
+        link.setReportScope(report.target().scope());
+        link.setCampaignId(report.target().campaignId());
+        link.setTemplateType(report.template());
+        link.setReportDays(report.reportDays());
+        link.setCommentary(report.commentary());
         link.setRecipientName(normalizeOptionalText(recipientName, 255));
         link.setRecipientEmail(normalizeEmail(recipientEmail, false));
         link.setExpiresAt(expiresAt);
@@ -446,6 +631,9 @@ public class ClientReportService {
                 entity.getReportTitle(),
                 entity.getClientLabel(),
                 entity.getAgencyLabel(),
+                safeReportScope(entity.getReportScope()).name(),
+                entity.getCampaignId(),
+                resolveCampaignLabel(entity.getWorkspaceId(), entity.getCampaignId()),
                 entity.getTemplateType() != null ? entity.getTemplateType().name() : null,
                 entity.getReportDays(),
                 entity.getRecipientName(),
@@ -466,6 +654,9 @@ public class ClientReportService {
                 entity.getRecipientEmail(),
                 entity.getClientLabel(),
                 entity.getAgencyLabel(),
+                safeReportScope(entity.getReportScope()).name(),
+                entity.getCampaignId(),
+                resolveCampaignLabel(entity.getWorkspaceId(), entity.getCampaignId()),
                 entity.getTemplateType() != null ? entity.getTemplateType().name() : null,
                 entity.getReportDays(),
                 entity.getCadence() != null ? entity.getCadence().name() : null,
@@ -502,6 +693,325 @@ public class ClientReportService {
                 company != null ? company.getName() : workspace.getName(),
                 resolveBaseUrl()
         );
+    }
+
+    private ReportDefinition buildReportDefinition(WorkspaceSnapshot snapshot,
+                                                   String reportTitle,
+                                                   String clientLabel,
+                                                   String agencyLabel,
+                                                   String reportScope,
+                                                   Long campaignId,
+                                                   String templateType,
+                                                   Integer reportDays,
+                                                   String commentary,
+                                                   boolean validateCampaignExists) {
+        Integer normalizedReportDays = normalizeReportDays(reportDays);
+        ResolvedReportTarget target = validateCampaignExists
+                ? resolveReportTarget(snapshot.workspace().getId(), reportScope, campaignId)
+                : restoreReportTarget(snapshot.workspace().getId(), reportScope, campaignId);
+        return new ReportDefinition(
+                normalizeReportTitle(reportTitle, snapshot.workspace(), normalizedReportDays),
+                normalizeOptionalText(
+                        clientLabel != null ? clientLabel : snapshot.workspace().getName(),
+                        255
+                ),
+                normalizeOptionalText(
+                        agencyLabel != null ? agencyLabel : snapshot.companyName(),
+                        255
+                ),
+                target,
+                normalizeTemplate(templateType),
+                normalizedReportDays,
+                normalizeOptionalText(commentary, 4000)
+        );
+    }
+
+    private ResolvedReportTarget resolveReportTarget(String workspaceId, String reportScope, Long campaignId) {
+        ClientReportScope scope = normalizeReportScope(reportScope);
+        if (scope == ClientReportScope.WORKSPACE) {
+            return new ResolvedReportTarget(scope, null, null);
+        }
+
+        if (campaignId == null) {
+            throw new SocialRavenException("campaignId is required when reportScope is CAMPAIGN", HttpStatus.BAD_REQUEST);
+        }
+
+        PostCollectionEntity campaign = postCollectionRepo.findByIdAndWorkspaceId(campaignId, workspaceId)
+                .orElseThrow(() -> new SocialRavenException("Campaign not found for this workspace", HttpStatus.NOT_FOUND));
+        return new ResolvedReportTarget(scope, campaign.getId(), labelForCampaign(campaign));
+    }
+
+    private ResolvedReportTarget restoreReportTarget(String workspaceId, String reportScope, Long campaignId) {
+        ClientReportScope scope = normalizeReportScope(reportScope);
+        if (scope == ClientReportScope.WORKSPACE) {
+            return new ResolvedReportTarget(scope, null, null);
+        }
+        if (campaignId == null) {
+            return new ResolvedReportTarget(ClientReportScope.WORKSPACE, null, null);
+        }
+        return new ResolvedReportTarget(scope, campaignId, resolveCampaignLabel(workspaceId, campaignId));
+    }
+
+    private ClientReportSummaryResponse buildSummary(AnalyticsWorkspaceOverviewResponse overview) {
+        return new ClientReportSummaryResponse(
+                overview.getCurrentRangeLabel(),
+                overview.getCurrentStartAt(),
+                overview.getCurrentEndAt(),
+                roundMetricValue(findMetric(overview, "impressions")),
+                roundMetricValue(findMetric(overview, "engagements")),
+                findMetric(overview, "engagementRate"),
+                roundMetricValue(findMetric(overview, "clicks")),
+                roundMetricValue(findMetric(overview, "videoViews")),
+                roundMetricValue(findMetric(overview, "postsPublished"))
+        );
+    }
+
+    private double findMetric(AnalyticsWorkspaceOverviewResponse overview, String key) {
+        return overview.getMetrics().stream()
+                .filter(metric -> key.equals(metric.getKey()))
+                .map(AnalyticsOverviewMetricResponse::getCurrentValue)
+                .findFirst()
+                .orElse(0.0d);
+    }
+
+    private List<ClientReportPlatformPerformanceResponse> buildPlatformPerformance(AnalyticsBreakdownResponse engagementBreakdown,
+                                                                                  AnalyticsBreakdownResponse impressionBreakdown) {
+        Map<String, ClientReportPlatformPerformanceResponse> merged = new LinkedHashMap<>();
+
+        for (AnalyticsBreakdownRowResponse row : engagementBreakdown.getRows()) {
+            merged.put(row.getKey(), new ClientReportPlatformPerformanceResponse(
+                    row.getKey(),
+                    defaultIfBlank(row.getLabel(), platformLabel(row.getKey())),
+                    row.getPostsPublished(),
+                    roundMetricValue(row.getPerformanceValue()),
+                    0L,
+                    row.getAveragePerformancePerPost(),
+                    row.getOutputSharePercent(),
+                    row.getPerformanceSharePercent(),
+                    null
+            ));
+        }
+
+        for (AnalyticsBreakdownRowResponse row : impressionBreakdown.getRows()) {
+            ClientReportPlatformPerformanceResponse current = merged.get(row.getKey());
+            if (current == null) {
+                current = new ClientReportPlatformPerformanceResponse(
+                        row.getKey(),
+                        defaultIfBlank(row.getLabel(), platformLabel(row.getKey())),
+                        row.getPostsPublished(),
+                        0L,
+                        0L,
+                        null,
+                        row.getOutputSharePercent(),
+                        null,
+                        row.getPerformanceSharePercent()
+                );
+                merged.put(row.getKey(), current);
+            }
+            current.setImpressions(roundMetricValue(row.getPerformanceValue()));
+            current.setImpressionSharePercent(row.getPerformanceSharePercent());
+            if (current.getPostsPublished() == 0L) {
+                current.setPostsPublished(row.getPostsPublished());
+            }
+            if (current.getOutputSharePercent() == null) {
+                current.setOutputSharePercent(row.getOutputSharePercent());
+            }
+        }
+
+        return merged.values().stream()
+                .sorted(Comparator.comparingLong(ClientReportPlatformPerformanceResponse::getEngagements)
+                        .reversed()
+                        .thenComparing(Comparator.comparingLong(ClientReportPlatformPerformanceResponse::getImpressions)
+                                .reversed()))
+                .toList();
+    }
+
+    private ClientReportTopPostResponse toTopPostResponse(AnalyticsPostRowResponse row) {
+        return new ClientReportTopPostResponse(
+                row.getPostId(),
+                row.getProvider(),
+                platformLabel(row.getProvider()),
+                row.getAccountName(),
+                row.getCampaignId(),
+                row.getCampaignLabel(),
+                row.getContent(),
+                row.getPostType(),
+                row.getMediaFormat(),
+                row.getPublishedAt(),
+                row.getImpressions(),
+                row.getReach(),
+                row.getLikes(),
+                row.getComments(),
+                row.getShares(),
+                row.getSaves(),
+                row.getClicks(),
+                row.getVideoViews(),
+                row.getWatchTimeMinutes(),
+                row.getEngagements(),
+                row.getEngagementRate()
+        );
+    }
+
+    private ClientReportTrendPointResponse toTrendPointResponse(AnalyticsTrendExplorerPointResponse point) {
+        return new ClientReportTrendPointResponse(
+                point.getBucketKey(),
+                point.getBucketStartDate(),
+                point.getBucketEndDate(),
+                point.getPerformanceValue(),
+                point.getPostsPublished(),
+                point.getAveragePerformancePerPost()
+        );
+    }
+
+    private ClientReportForecastSummaryResponse buildForecastSummary(AnalyticsForecastPanelResponse forecast) {
+        return new ClientReportForecastSummaryResponse(
+                forecast.getMetric(),
+                forecast.getMetricLabel(),
+                forecast.getMetricFormat(),
+                forecast.getPlanningWindowLabel(),
+                forecast.getBasisNote(),
+                new ClientReportForecastItemResponse(
+                        forecast.getNextPostForecast().isAvailable(),
+                        "Next post prediction",
+                        forecast.getNextPostForecast().getConfidenceTier(),
+                        null,
+                        null,
+                        null,
+                        forecast.getNextPostForecast().getComparablePosts(),
+                        null,
+                        toForecastRange(forecast.getNextPostForecast().getRange()),
+                        forecast.getNextPostForecast().getBasisSummary(),
+                        forecast.getNextPostForecast().getUnavailableReason()
+                ),
+                new ClientReportForecastItemResponse(
+                        forecast.getNextBestSlot().isAvailable(),
+                        "Best next slot",
+                        forecast.getNextBestSlot().getConfidenceTier(),
+                        forecast.getNextBestSlot().getSlotLabel(),
+                        forecast.getForecastDays(),
+                        1,
+                        forecast.getNextBestSlot().getComparablePosts(),
+                        forecast.getNextBestSlot().getLiftPercent(),
+                        toForecastRange(forecast.getNextBestSlot().getRange()),
+                        forecast.getNextBestSlot().getBasisSummary(),
+                        forecast.getNextBestSlot().getUnavailableReason()
+                ),
+                new ClientReportForecastItemResponse(
+                        forecast.getEndOfPeriodForecast().isAvailable(),
+                        "Planning window projection",
+                        forecast.getEndOfPeriodForecast().getConfidenceTier(),
+                        null,
+                        forecast.getEndOfPeriodForecast().getForecastDays(),
+                        forecast.getEndOfPeriodForecast().getPlannedPosts(),
+                        forecast.getEndOfPeriodForecast().getComparablePosts(),
+                        null,
+                        toForecastRange(forecast.getEndOfPeriodForecast().getRange()),
+                        forecast.getEndOfPeriodForecast().getBasisSummary(),
+                        forecast.getEndOfPeriodForecast().getUnavailableReason()
+                )
+        );
+    }
+
+    private ClientReportForecastRangeResponse toForecastRange(AnalyticsForecastRangeResponse range) {
+        if (range == null) {
+            return null;
+        }
+        return new ClientReportForecastRangeResponse(range.getLowValue(), range.getExpectedValue(), range.getHighValue());
+    }
+
+    private ClientReportCampaignInsightResponse buildCampaignInsight(ResolvedReportTarget target,
+                                                                    AnalyticsCampaignDrilldownResponse drilldown) {
+        if (target.scope() != ClientReportScope.CAMPAIGN) {
+            return null;
+        }
+
+        if (drilldown == null) {
+            return new ClientReportCampaignInsightResponse(
+                    target.campaignId(),
+                    target.campaignLabel(),
+                    0L,
+                    0.0d,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    0L,
+                    List.of(),
+                    null,
+                    null
+            );
+        }
+
+        return new ClientReportCampaignInsightResponse(
+                drilldown.getCampaignId(),
+                defaultIfBlank(drilldown.getCampaignLabel(), target.campaignLabel()),
+                drilldown.getSummary().getPostsPublished(),
+                drilldown.getSummary().getPerformanceValue(),
+                drilldown.getSummary().getAveragePerformancePerPost(),
+                drilldown.getComparableBenchmark() != null ? drilldown.getComparableBenchmark().getComparableAverageValue() : null,
+                drilldown.getComparableBenchmark() != null ? drilldown.getComparableBenchmark().getLiftPercent() : null,
+                drilldown.getPercentileRank() != null ? drilldown.getPercentileRank().getPercentile() : null,
+                drilldown.getPercentileRank() != null ? drilldown.getPercentileRank().getRank() : null,
+                drilldown.getPercentileRank() != null ? drilldown.getPercentileRank().getComparableCount() : 0L,
+                drilldown.getTrend().stream().map(this::toTrendPointResponse).toList(),
+                toContribution(drilldown.getPlatformBreakdown()),
+                toContribution(drilldown.getAccountBreakdown())
+        );
+    }
+
+    private ClientReportContributionResponse toContribution(AnalyticsDrilldownContributionResponse contribution) {
+        if (contribution == null) {
+            return null;
+        }
+        return new ClientReportContributionResponse(
+                contribution.getDimension(),
+                contribution.getDimensionLabel(),
+                contribution.getRows().stream()
+                        .map(this::toContributionRow)
+                        .toList()
+        );
+    }
+
+    private ClientReportContributionRowResponse toContributionRow(AnalyticsBreakdownRowResponse row) {
+        return new ClientReportContributionRowResponse(
+                row.getKey(),
+                row.getLabel(),
+                row.getPostsPublished(),
+                row.getPerformanceValue(),
+                row.getOutputSharePercent(),
+                row.getPerformanceSharePercent(),
+                row.getShareGapPercent(),
+                row.getAveragePerformancePerPost()
+        );
+    }
+
+    private AnalyticsCampaignDrilldownResponse loadCampaignDrilldown(String workspaceId, int reportDays, Long campaignId) {
+        try {
+            return withWorkspaceContext(
+                    workspaceId,
+                    () -> analyticsWorkspaceService.getCampaignDrilldown(
+                            reportDays,
+                            null,
+                            null,
+                            null,
+                            campaignId,
+                            DEFAULT_REPORT_METRIC
+                    )
+            );
+        } catch (SocialRavenException ex) {
+            if (String.valueOf(HttpStatus.NOT_FOUND.value()).equals(ex.getErrorCode())) {
+                return null;
+            }
+            throw ex;
+        }
+    }
+
+    private String buildReportWindowLabel(AnalyticsWorkspaceOverviewResponse overview, int reportDays) {
+        if (StringUtils.hasText(overview.getCurrentRangeLabel())) {
+            return overview.getCurrentRangeLabel();
+        }
+        return "Last " + reportDays + " days";
     }
 
     private OffsetDateTime normalizeLinkExpiry(OffsetDateTime requestedExpiry, OffsetDateTime now) {
@@ -549,6 +1059,21 @@ public class ClientReportService {
         } catch (IllegalArgumentException ex) {
             throw new SocialRavenException("Unsupported report cadence", HttpStatus.BAD_REQUEST);
         }
+    }
+
+    private ClientReportScope normalizeReportScope(String reportScope) {
+        if (!StringUtils.hasText(reportScope)) {
+            return ClientReportScope.WORKSPACE;
+        }
+        try {
+            return ClientReportScope.valueOf(reportScope.trim().toUpperCase(Locale.ENGLISH));
+        } catch (IllegalArgumentException ex) {
+            throw new SocialRavenException("Unsupported report scope", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    private ClientReportScope safeReportScope(ClientReportScope reportScope) {
+        return reportScope != null ? reportScope : ClientReportScope.WORKSPACE;
     }
 
     private Integer normalizeReportDays(Integer reportDays) {
@@ -657,82 +1182,113 @@ public class ClientReportService {
 
     private String normalizePublicCommentary(String requestCommentary,
                                              ClientReportTemplate template,
-                                             AnalyticsOverviewResponse overview,
-                                             List<PlatformStatsResponse> platformStats,
-                                             String reportWindowLabel) {
-        if (requestCommentary != null && !requestCommentary.isBlank()) {
+                                             ClientReportSummaryResponse summary,
+                                             List<ClientReportPlatformPerformanceResponse> platformPerformance,
+                                             List<ClientReportTopPostResponse> topPosts,
+                                             ClientReportForecastSummaryResponse forecast,
+                                             String reportWindowLabel,
+                                             ResolvedReportTarget target) {
+        if (StringUtils.hasText(requestCommentary)) {
             return requestCommentary.trim();
         }
 
-        PlatformStatsResponse strongestPlatform = platformStats.stream()
-                .max(Comparator.comparingLong(this::totalEngagements))
-                .orElse(null);
+        ClientReportPlatformPerformanceResponse strongestPlatform = platformPerformance.stream().findFirst().orElse(null);
+        ClientReportTopPostResponse strongestPost = topPosts.stream().findFirst().orElse(null);
+        String scopePhrase = target.scope() == ClientReportScope.CAMPAIGN && StringUtils.hasText(target.campaignLabel())
+                ? "campaign " + target.campaignLabel()
+                : "workspace";
 
         return switch (template) {
-            case ENGAGEMENT_SPOTLIGHT -> strongestPlatform != null
-                    ? strongestPlatform.getProvider() + " led engagement in "
-                    + reportWindowLabel.toLowerCase(Locale.ENGLISH)
-                    + ", with " + totalEngagements(strongestPlatform)
-                    + " interactions across published posts."
-                    : "This engagement report highlights the channels and posts creating the strongest audience response.";
-            case GROWTH_SNAPSHOT -> "This growth snapshot focuses on follower momentum, publishing consistency, and the channels driving lift in the current reporting window.";
-            case EXECUTIVE_SUMMARY -> overview != null
-                    ? "This executive summary covers reach, engagement, and content output across "
-                    + reportWindowLabel.toLowerCase(Locale.ENGLISH) + "."
-                    : "This executive summary highlights the most important performance signals for the current reporting window.";
+            case ENGAGEMENT_SPOTLIGHT -> {
+                if (strongestPlatform != null) {
+                    yield strongestPlatform.getPlatformLabel() + " led engagement for this " + scopePhrase
+                            + " during " + reportWindowLabel.toLowerCase(Locale.ENGLISH)
+                            + ", producing " + formatWholeNumber(strongestPlatform.getEngagements())
+                            + " interactions across published posts.";
+                }
+                yield "This engagement spotlight summarizes the posts, channels, and publishing windows that delivered the strongest audience response.";
+            }
+            case GROWTH_SNAPSHOT -> {
+                if (forecast != null && forecast.getPlanningWindowProjection() != null
+                        && forecast.getPlanningWindowProjection().isAvailable()
+                        && forecast.getPlanningWindowProjection().getRange() != null
+                        && forecast.getPlanningWindowProjection().getRange().getExpectedValue() != null) {
+                    yield "This snapshot focuses on momentum and planning confidence for the " + scopePhrase
+                            + ", with the next " + forecast.getPlanningWindowProjection().getForecastDays()
+                            + " days projected around "
+                            + formatWholeNumber(roundMetricValue(forecast.getPlanningWindowProjection().getRange().getExpectedValue()))
+                            + " engagements.";
+                }
+                yield "This snapshot focuses on momentum, engagement efficiency, and the next publishing opportunities in the current reporting window.";
+            }
+            case EXECUTIVE_SUMMARY -> {
+                if (strongestPost != null && strongestPost.getEngagements() != null) {
+                    yield "This executive summary covers " + reportWindowLabel.toLowerCase(Locale.ENGLISH)
+                            + " for the " + scopePhrase + ", including "
+                            + formatWholeNumber(summary.getEngagements())
+                            + " total engagements and the top-performing content that drove the period.";
+                }
+                yield "This executive summary covers the most important reach, engagement, and publishing signals in the current reporting window.";
+            }
         };
     }
 
-    private List<String> buildHighlights(WorkspaceClientReportLinkEntity link,
-                                         AnalyticsOverviewResponse overview,
-                                         List<PlatformStatsResponse> platformStats,
-                                         List<TopPostResponse> topPosts,
+    private List<String> buildHighlights(ReportDefinition report,
+                                         ClientReportSummaryResponse summary,
+                                         List<ClientReportPlatformPerformanceResponse> platformPerformance,
+                                         List<ClientReportTopPostResponse> topPosts,
+                                         ClientReportForecastSummaryResponse forecast,
+                                         ClientReportCampaignInsightResponse campaignInsight,
                                          String reportWindowLabel) {
         List<String> highlights = new ArrayList<>();
-        highlights.add("Delivered " + overview.getTotalImpressions() + " impressions and "
-                + totalOverviewEngagements(overview) + " engagements across "
-                + overview.getTotalPosts() + " posts in "
-                + reportWindowLabel.toLowerCase(Locale.ENGLISH) + ".");
+        highlights.add("Recorded " + formatWholeNumber(summary.getImpressions())
+                + " impressions and " + formatWholeNumber(summary.getEngagements())
+                + " engagements across " + formatWholeNumber(summary.getPostsPublished())
+                + " published posts in " + reportWindowLabel.toLowerCase(Locale.ENGLISH) + ".");
 
-        platformStats.stream()
-                .max(Comparator.comparingLong(this::totalEngagements))
-                .ifPresent(platform -> highlights.add(
-                        platform.getProvider() + " is currently the strongest channel by engagement, with "
-                                + totalEngagements(platform) + " interactions and "
-                                + platform.getImpressions() + " impressions."
-                ));
+        platformPerformance.stream().findFirst().ifPresent(platform -> highlights.add(
+                platform.getPlatformLabel() + " led the window with "
+                        + formatWholeNumber(platform.getEngagements()) + " engagements across "
+                        + formatWholeNumber(platform.getPostsPublished()) + " posts"
+                        + (platform.getEngagementSharePercent() != null
+                        ? ", contributing " + formatPercent(platform.getEngagementSharePercent()) + " of total engagement."
+                        : ".")
+        ));
 
-        topPosts.stream()
-                .findFirst()
-                .ifPresent(post -> highlights.add(
-                        "Top-performing content came from " + post.getProvider()
-                                + ", reaching " + post.getImpressions() + " impressions at "
-                                + String.format(Locale.ENGLISH, "%.2f", post.getEngagementRate())
-                                + "% engagement."
-                ));
+        topPosts.stream().findFirst().ifPresent(post -> highlights.add(
+                "Top content came from " + platformLabel(post.getProvider())
+                        + ", delivering " + formatWholeNumber(valueOrZero(post.getEngagements()))
+                        + " engagements from "
+                        + formatWholeNumber(valueOrZero(post.getLikes())) + " likes, "
+                        + formatWholeNumber(valueOrZero(post.getComments())) + " comments, and "
+                        + formatWholeNumber(valueOrZero(post.getShares())) + " shares."
+        ));
 
-        if (link.getTemplateType() == ClientReportTemplate.GROWTH_SNAPSHOT) {
-            highlights.add("Follower growth landed at " + overview.getFollowerGrowth()
-                    + " over the same window, giving a clear read on audience momentum.");
+        if (forecast != null && forecast.getNextBestSlot() != null && forecast.getNextBestSlot().isAvailable()) {
+            ClientReportForecastItemResponse bestSlot = forecast.getNextBestSlot();
+            highlights.add("Forecasting suggests " + defaultIfBlank(bestSlot.getSlotLabel(), "the next recommended slot")
+                    + " can outperform the current slice baseline"
+                    + (bestSlot.getLiftPercent() != null
+                    ? " by " + formatPercent(bestSlot.getLiftPercent()) + "."
+                    : "."));
+        } else if (campaignInsight != null && campaignInsight.getPercentile() != null) {
+            highlights.add("This campaign ranks in the " + formatWholeNumber(Math.round(campaignInsight.getPercentile()))
+                    + "th percentile against comparable campaigns in the same workspace slice.");
         }
 
-        return highlights.stream().filter(Objects::nonNull).distinct().limit(3).toList();
-    }
-
-    private long totalEngagements(PlatformStatsResponse response) {
-        return response.getLikes() + response.getComments() + response.getShares();
-    }
-
-    private long totalOverviewEngagements(AnalyticsOverviewResponse overview) {
-        return overview.getTotalLikes() + overview.getTotalComments() + overview.getTotalShares();
+        return highlights.stream()
+                .filter(StringUtils::hasText)
+                .distinct()
+                .limit(4)
+                .toList();
     }
 
     private String resolveLogoUrl(WorkspaceSnapshot snapshot) {
         String fileKey = snapshot.workspace().getLogoS3Key();
-        if ((fileKey == null || fileKey.isBlank()) && snapshot.company() != null) {
+        if (!StringUtils.hasText(fileKey) && snapshot.company() != null) {
             fileKey = snapshot.company().getLogoS3Key();
         }
-        if (fileKey == null || fileKey.isBlank()) {
+        if (!StringUtils.hasText(fileKey)) {
             return null;
         }
         return storageService.generatePresignedGetUrl(fileKey, Duration.ofHours(12));
@@ -766,27 +1322,20 @@ public class ClientReportService {
     }
 
     private String defaultIfBlank(String preferred, String fallback) {
-        return preferred != null && !preferred.isBlank() ? preferred : fallback;
-    }
-
-    private String resolveSnapshotType(Integer reportDays) {
-        if (reportDays == null || reportDays <= 30) {
-            return "T30D";
-        }
-        return "T90D";
+        return StringUtils.hasText(preferred) ? preferred : fallback;
     }
 
     private String buildEmailCommentary(String reportCommentary, OffsetDateTime generatedAt) {
         String timestamp = generatedAt.format(DateTimeFormatter.ofPattern("MMM d, yyyy 'at' HH:mm 'UTC'", Locale.ENGLISH));
-        if (reportCommentary == null || reportCommentary.isBlank()) {
-            return "Prepared " + timestamp + ". Open the live report to review the latest metrics and top-performing content.";
+        if (!StringUtils.hasText(reportCommentary)) {
+            return "Prepared " + timestamp + ". Open the live report to review the latest metrics, trends, and top-performing content.";
         }
         return reportCommentary + " Prepared " + timestamp + ".";
     }
 
     private String buildPdfFileName(PublicClientReportResponse report) {
         String candidate = defaultIfBlank(report.getReportTitle(), report.getClientLabel());
-        if (candidate == null || candidate.isBlank()) {
+        if (!StringUtils.hasText(candidate)) {
             candidate = "client-report";
         }
         String slug = candidate.toLowerCase(Locale.ENGLISH)
@@ -808,6 +1357,71 @@ public class ClientReportService {
         return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
     }
 
+    private String resolveCampaignLabel(String workspaceId, Long campaignId) {
+        if (campaignId == null) {
+            return null;
+        }
+        return postCollectionRepo.findByIdAndWorkspaceId(campaignId, workspaceId)
+                .map(this::labelForCampaign)
+                .orElse("Campaign #" + campaignId);
+    }
+
+    private String labelForCampaign(PostCollectionEntity campaign) {
+        if (campaign == null || campaign.getId() == null) {
+            return "Campaign";
+        }
+        String description = normalizeOptionalText(campaign.getDescription(), 100000);
+        if (!StringUtils.hasText(description)) {
+            return "Campaign #" + campaign.getId();
+        }
+        String firstLine = description.split("\\R", 2)[0].trim();
+        if (!StringUtils.hasText(firstLine)) {
+            return "Campaign #" + campaign.getId();
+        }
+        return firstLine.length() > 80 ? firstLine.substring(0, 77) + "..." : firstLine;
+    }
+
+    private String reportScopeLabel(ClientReportScope scope) {
+        return scope == ClientReportScope.CAMPAIGN ? "Campaign" : "Workspace";
+    }
+
+    private String platformLabel(String provider) {
+        if (!StringUtils.hasText(provider)) {
+            return "Platform";
+        }
+        try {
+            Provider normalized = Provider.valueOf(provider.trim().toUpperCase(Locale.ENGLISH));
+            return switch (normalized) {
+                case INSTAGRAM -> "Instagram";
+                case X -> "X";
+                case LINKEDIN -> "LinkedIn";
+                case FACEBOOK -> "Facebook";
+                case YOUTUBE -> "YouTube";
+                case TIKTOK -> "TikTok";
+                case THREADS -> "Threads";
+            };
+        } catch (IllegalArgumentException ex) {
+            String compact = provider.trim().toLowerCase(Locale.ENGLISH).replace('_', ' ');
+            return compact.substring(0, 1).toUpperCase(Locale.ENGLISH) + compact.substring(1);
+        }
+    }
+
+    private long roundMetricValue(double value) {
+        return Math.round(value);
+    }
+
+    private String formatWholeNumber(long value) {
+        return String.format(Locale.ENGLISH, "%,d", value);
+    }
+
+    private String formatPercent(double value) {
+        return String.format(Locale.ENGLISH, "%.1f%%", value);
+    }
+
+    private Long valueOrZero(Long value) {
+        return value != null ? value : 0L;
+    }
+
     private record WorkspaceSnapshot(WorkspaceEntity workspace,
                                      CompanyEntity company,
                                      String companyName,
@@ -817,6 +1431,20 @@ public class ClientReportService {
     private record ResolvedClientReportLink(WorkspaceClientReportLinkEntity link,
                                             WorkspaceSnapshot workspaceSnapshot,
                                             OffsetDateTime tokenExpiresAt) {
+    }
+
+    private record ResolvedReportTarget(ClientReportScope scope,
+                                        Long campaignId,
+                                        String campaignLabel) {
+    }
+
+    private record ReportDefinition(String reportTitle,
+                                    String clientLabel,
+                                    String agencyLabel,
+                                    ResolvedReportTarget target,
+                                    ClientReportTemplate template,
+                                    Integer reportDays,
+                                    String commentary) {
     }
 
     public record ClientReportPdfDocument(byte[] bytes, String fileName) {

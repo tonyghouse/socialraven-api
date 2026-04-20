@@ -14,6 +14,9 @@ public class ClientReportLinkResponse {
     private String reportTitle;
     private String clientLabel;
     private String agencyLabel;
+    private String reportScope;
+    private Long campaignId;
+    private String campaignLabel;
     private String templateType;
     private Integer reportDays;
     private String recipientName;

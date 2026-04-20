@@ -9,6 +9,8 @@ public class CreateClientReportScheduleRequest {
     private String recipientEmail;
     private String clientLabel;
     private String agencyLabel;
+    private String reportScope;
+    private Long campaignId;
     private String templateType;
     private Integer reportDays;
     private String commentary;

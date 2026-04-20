@@ -1,11 +1,19 @@
 package com.tonyghouse.socialraven.controller;
 
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsBreakdownResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsCampaignDrilldownResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsForecastPanelResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsManualRefreshResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsAccountDrilldownResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsLinkedInPageActivityResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsOverviewResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsPatternLabResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsPlatformDrilldownResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsPostDrilldownResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsPostRankingsResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsPostTableResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsRecommendationDismissResponse;
+import com.tonyghouse.socialraven.dto.analytics.AnalyticsRecommendationPanelResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsShellResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsTikTokCreatorActivityResponse;
 import com.tonyghouse.socialraven.dto.analytics.AnalyticsTrendExplorerResponse;
@@ -24,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -149,6 +158,152 @@ public class AnalyticsController {
                 campaignId,
                 contentType,
                 dimension,
+                metric
+        );
+    }
+
+    @GetMapping("/pattern-lab")
+    public AnalyticsPatternLabResponse getPatternLab(
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "workspace") String scope,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getPatternLab(
+                days,
+                platform,
+                providerUserId,
+                campaignId,
+                contentType,
+                scope,
+                metric
+        );
+    }
+
+    @GetMapping("/recommendation-panel")
+    public AnalyticsRecommendationPanelResponse getRecommendationPanel(
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "workspace") String scope,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getRecommendationPanel(
+                days,
+                platform,
+                providerUserId,
+                campaignId,
+                contentType,
+                scope,
+                metric
+        );
+    }
+
+    @PostMapping("/recommendations/{recommendationId}/dismiss")
+    public AnalyticsRecommendationDismissResponse dismissRecommendation(
+            @PathVariable Long recommendationId) {
+        return analyticsWorkspaceService.dismissRecommendation(recommendationId);
+    }
+
+    @GetMapping("/forecast-panel")
+    public AnalyticsForecastPanelResponse getForecastPanel(
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "engagements") String metric,
+            @RequestParam(defaultValue = "7") int forecastDays,
+            @RequestParam(defaultValue = "3") int plannedPosts) {
+        return analyticsWorkspaceService.getForecastPanel(
+                days,
+                platform,
+                providerUserId,
+                campaignId,
+                contentType,
+                metric,
+                forecastDays,
+                plannedPosts
+        );
+    }
+
+    @GetMapping("/drilldown/post/{postId}")
+    public AnalyticsPostDrilldownResponse getPostDrilldown(
+            @PathVariable Long postId,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getPostDrilldown(
+                days,
+                platform,
+                providerUserId,
+                campaignId,
+                contentType,
+                postId,
+                metric
+        );
+    }
+
+    @GetMapping("/drilldown/account/{provider}/{providerUserId}")
+    public AnalyticsAccountDrilldownResponse getAccountDrilldown(
+            @PathVariable String provider,
+            @PathVariable String providerUserId,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getAccountDrilldown(
+                days,
+                platform,
+                campaignId,
+                contentType,
+                provider,
+                providerUserId,
+                metric
+        );
+    }
+
+    @GetMapping("/drilldown/platform/{provider}")
+    public AnalyticsPlatformDrilldownResponse getPlatformDrilldown(
+            @PathVariable String provider,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) Long campaignId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getPlatformDrilldown(
+                days,
+                platform,
+                providerUserId,
+                campaignId,
+                contentType,
+                provider,
+                metric
+        );
+    }
+
+    @GetMapping("/drilldown/campaign/{campaignId}")
+    public AnalyticsCampaignDrilldownResponse getCampaignDrilldown(
+            @PathVariable Long campaignId,
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) String platform,
+            @RequestParam(required = false) String providerUserId,
+            @RequestParam(required = false) String contentType,
+            @RequestParam(defaultValue = "engagements") String metric) {
+        return analyticsWorkspaceService.getCampaignDrilldown(
+                days,
+                platform,
+                providerUserId,
+                contentType,
+                campaignId,
                 metric
         );
     }

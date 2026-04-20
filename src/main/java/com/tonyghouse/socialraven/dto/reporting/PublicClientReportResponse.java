@@ -1,10 +1,7 @@
 package com.tonyghouse.socialraven.dto.reporting;
 
-import com.tonyghouse.socialraven.dto.analytics.AnalyticsOverviewResponse;
-import com.tonyghouse.socialraven.dto.analytics.PlatformStatsResponse;
-import com.tonyghouse.socialraven.dto.analytics.TimelinePointResponse;
-import com.tonyghouse.socialraven.dto.analytics.TopPostResponse;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -23,12 +20,18 @@ public class PublicClientReportResponse {
     private String templateType;
     private Integer reportDays;
     private String reportWindowLabel;
+    private String reportScope;
+    private String reportScopeLabel;
+    private Long campaignId;
+    private String campaignLabel;
     private String commentary;
-    private List<String> highlights;
+    private List<String> highlights = new ArrayList<>();
     private OffsetDateTime generatedAt;
     private OffsetDateTime linkExpiresAt;
-    private AnalyticsOverviewResponse overview;
-    private List<PlatformStatsResponse> platformStats;
-    private List<TopPostResponse> topPosts;
-    private List<TimelinePointResponse> timeline;
+    private ClientReportSummaryResponse summary;
+    private List<ClientReportPlatformPerformanceResponse> platformPerformance = new ArrayList<>();
+    private List<ClientReportTopPostResponse> topPosts = new ArrayList<>();
+    private List<ClientReportTrendPointResponse> trend = new ArrayList<>();
+    private ClientReportForecastSummaryResponse forecast;
+    private ClientReportCampaignInsightResponse campaignInsight;
 }
