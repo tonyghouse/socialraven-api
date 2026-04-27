@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.*;
  *   curl -X PUT https://api.socialraven.io/admin/plans/user_clerk_id \
  *        -H "X-Admin-Key: <secret>" \
  *        -H "Content-Type: application/json" \
- *        -d '{"planType":"AGENCY_PRO","status":"ACTIVE","customPostsLimit":10000,"customAccountsLimit":500}'
+ *        -d '{"planType":"AGENCY_PRO","status":"ACTIVE","customPostsLimit":10000,"customAccountsLimit":500,"customXPostsLimit":400}'
  */
 @RestController
 @RequestMapping("/admin/plans")
@@ -46,7 +46,7 @@ public class AdminPlanController {
     /**
      * PUT /admin/plans/{userId}
      * Overrides plan type, status, and/or custom limits for a specific user.
-     * Pass customPostsLimit / customAccountsLimit = -1 to clear the override (revert to plan default).
+     * Pass customPostsLimit / customAccountsLimit / customXPostsLimit = -1 to clear the override.
      */
     @PutMapping("/{userId}")
     public UserPlanResponse overridePlan(
@@ -72,6 +72,7 @@ public class AdminPlanController {
     /**
      * PUT /admin/plans/workspace/{workspaceId}
      * Overrides plan type, status, and/or custom limits keyed by workspaceId.
+     * customXPostsLimit on this route is workspace-scoped.
      */
     @PutMapping("/workspace/{workspaceId}")
     public UserPlanResponse overrideWorkspacePlan(

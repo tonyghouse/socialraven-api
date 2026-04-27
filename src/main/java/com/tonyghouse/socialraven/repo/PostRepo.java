@@ -1,5 +1,6 @@
 package com.tonyghouse.socialraven.repo;
 
+import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.constant.PostStatus;
 import com.tonyghouse.socialraven.entity.PostEntity;
 import org.springframework.data.domain.Page;
@@ -108,4 +109,19 @@ public interface PostRepo extends JpaRepository<PostEntity, Long> {
                 order by p.scheduledTime desc
             """)
     List<PostEntity> findAnalyticsPostsByWorkspaceId(@Param("workspaceId") String workspaceId);
+
+    @Query("""
+                select count(p)
+                from PostEntity p
+                join p.postCollection pc
+                where pc.workspaceId = :workspaceId
+                  and pc.draft = false
+                  and pc.scheduledTime >= :startOfMonth
+                  and p.provider = :provider
+            """)
+    long countWorkspacePostsByProviderFromMonth(
+            @Param("workspaceId") String workspaceId,
+            @Param("provider") Provider provider,
+            @Param("startOfMonth") OffsetDateTime startOfMonth
+    );
 }

@@ -14,6 +14,12 @@ public class AdminPlanOverrideRequest {
     private Integer customPostsLimit;
     /** Custom connected-accounts limit; null = use plan default */
     private Integer customAccountsLimit;
+    /**
+     * Custom x.com posts/month limit.
+     * On company-scoped admin endpoints this applies to the whole company plan.
+     * On workspace-scoped admin endpoints this applies only to that workspace.
+     */
+    private Integer customXPostsLimit;
     /** Optional ISO-8601 renewal date override */
     private String renewalDate;
 }

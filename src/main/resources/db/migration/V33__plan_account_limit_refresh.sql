@@ -1,0 +1,18 @@
+UPDATE socialraven.plan_config
+SET accounts_limit = CASE plan_type
+    WHEN 'INFLUENCER_TRIAL' THEN 15
+    WHEN 'INFLUENCER_BASE'  THEN 15
+    WHEN 'INFLUENCER_PRO'   THEN 30
+    WHEN 'AGENCY_TRIAL'     THEN 30
+    WHEN 'AGENCY_BASE'      THEN 30
+    WHEN 'AGENCY_PRO'       THEN 30
+    ELSE accounts_limit
+END
+WHERE plan_type IN (
+    'INFLUENCER_TRIAL',
+    'INFLUENCER_BASE',
+    'INFLUENCER_PRO',
+    'AGENCY_TRIAL',
+    'AGENCY_BASE',
+    'AGENCY_PRO'
+);

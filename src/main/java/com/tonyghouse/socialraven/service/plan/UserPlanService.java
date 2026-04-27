@@ -50,37 +50,37 @@ public class UserPlanService {
     @Transactional
     public UserPlanResponse getUserPlan(String userId) {
         String companyId = resolvePrimaryCompanyId(userId);
-        return toResponse(getOrCreateForCompany(companyId));
+        return toResponse(getOrCreateForCompany(companyId), resolveSingleActiveWorkspace(companyId));
     }
 
     @Transactional
     public UserPlanResponse changePlan(String userId, ChangePlanRequest request) {
         String companyId = resolvePrimaryCompanyId(userId);
-        return changeCompanyPlan(companyId, request);
+        return changeCompanyPlan(companyId, request, resolveSingleActiveWorkspace(companyId));
     }
 
     @Transactional
     public UserPlanResponse adminOverride(String targetUserId, AdminPlanOverrideRequest request) {
         String companyId = resolvePrimaryCompanyId(targetUserId);
-        return adminOverrideByCompanyId(companyId, request);
+        return adminOverrideByCompanyId(companyId, request, resolveSingleActiveWorkspace(companyId));
     }
 
     @Transactional
     public UserPlanResponse getWorkspacePlan(String workspaceId) {
         WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        return toResponse(getOrCreateForCompany(workspace.getCompanyId()));
+        return toResponse(getOrCreateForCompany(workspace.getCompanyId()), workspace);
     }
 
     @Transactional
     public UserPlanResponse changeWorkspacePlan(String workspaceId, ChangePlanRequest request) {
         WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        return changeCompanyPlan(workspace.getCompanyId(), request);
+        return changeCompanyPlan(workspace.getCompanyId(), request, workspace);
     }
 
     @Transactional
     public UserPlanResponse adminOverrideByWorkspace(String workspaceId, AdminPlanOverrideRequest request) {
         WorkspaceEntity workspace = requireWorkspace(workspaceId);
-        return adminOverrideByCompanyId(workspace.getCompanyId(), request);
+        return adminOverrideByWorkspace(workspace, request);
     }
 
     public UserPlanEntity getOrCreateForCompany(String companyId) {
@@ -94,18 +94,17 @@ public class UserPlanService {
         });
     }
 
-    private UserPlanResponse changeCompanyPlan(String companyId, ChangePlanRequest request) {
+    private UserPlanResponse changeCompanyPlan(String companyId, ChangePlanRequest request, WorkspaceEntity responseWorkspace) {
         PlanType newPlanType = request.getPlanType();
         if (newPlanType == null) {
             throw new SocialRavenException("planType is required", HttpStatus.BAD_REQUEST);
         }
 
-        planConfigRepo.findById(newPlanType)
-                .orElseThrow(() -> new SocialRavenException("Unknown plan: " + newPlanType, HttpStatus.BAD_REQUEST));
+        ensurePlanExists(newPlanType);
 
         UserPlanEntity entity = getOrCreateForCompany(companyId);
         if (entity.getPlanType() == newPlanType) {
-            return toResponse(entity);
+            return toResponse(entity, responseWorkspace);
         }
 
         entity.setPlanType(newPlanType);
@@ -124,28 +123,35 @@ public class UserPlanService {
         entity.setUpdatedAt(OffsetDateTime.now());
         entity.setCustomPostsLimit(null);
         entity.setCustomAccountsLimit(null);
+        entity.setCustomXPostsLimit(null);
 
         userPlanRepo.save(entity);
         log.info("Company {} changed plan to {}", companyId, newPlanType);
-        return toResponse(entity);
+        return toResponse(entity, responseWorkspace);
     }
 
-    private UserPlanResponse adminOverrideByCompanyId(String companyId, AdminPlanOverrideRequest request) {
+    private UserPlanResponse adminOverrideByCompanyId(
+            String companyId,
+            AdminPlanOverrideRequest request,
+            WorkspaceEntity responseWorkspace
+    ) {
         UserPlanEntity entity = getOrCreateForCompany(companyId);
 
         if (request.getPlanType() != null) {
-            planConfigRepo.findById(request.getPlanType())
-                    .orElseThrow(() -> new SocialRavenException("Unknown plan: " + request.getPlanType(), HttpStatus.BAD_REQUEST));
+            ensurePlanExists(request.getPlanType());
             entity.setPlanType(request.getPlanType());
         }
         if (request.getStatus() != null) {
             entity.setStatus(request.getStatus());
         }
         if (request.getCustomPostsLimit() != null) {
-            entity.setCustomPostsLimit(request.getCustomPostsLimit() < 0 ? null : request.getCustomPostsLimit());
+            entity.setCustomPostsLimit(normalizeOverride(request.getCustomPostsLimit()));
         }
         if (request.getCustomAccountsLimit() != null) {
-            entity.setCustomAccountsLimit(request.getCustomAccountsLimit() < 0 ? null : request.getCustomAccountsLimit());
+            entity.setCustomAccountsLimit(normalizeOverride(request.getCustomAccountsLimit()));
+        }
+        if (request.getCustomXPostsLimit() != null) {
+            entity.setCustomXPostsLimit(normalizeOverride(request.getCustomXPostsLimit()));
         }
         if (request.getRenewalDate() != null) {
             entity.setRenewalDate(OffsetDateTime.parse(request.getRenewalDate()));
@@ -153,10 +159,55 @@ public class UserPlanService {
 
         entity.setUpdatedAt(OffsetDateTime.now());
         userPlanRepo.save(entity);
-        log.info("Admin override applied to company {}: plan={}, status={}, postsLimit={}, accountsLimit={}",
+        log.info("Admin override applied to company {}: plan={}, status={}, postsLimit={}, accountsLimit={}, xPostsLimit={}",
                 companyId, entity.getPlanType(), entity.getStatus(),
-                entity.getCustomPostsLimit(), entity.getCustomAccountsLimit());
-        return toResponse(entity);
+                entity.getCustomPostsLimit(), entity.getCustomAccountsLimit(), entity.getCustomXPostsLimit());
+        return toResponse(entity, responseWorkspace);
+    }
+
+    private UserPlanResponse adminOverrideByWorkspace(WorkspaceEntity workspace, AdminPlanOverrideRequest request) {
+        String companyId = workspace.getCompanyId();
+        UserPlanEntity entity = getOrCreateForCompany(companyId);
+        boolean companyPlanChanged = false;
+
+        if (request.getPlanType() != null) {
+            ensurePlanExists(request.getPlanType());
+            entity.setPlanType(request.getPlanType());
+            companyPlanChanged = true;
+        }
+        if (request.getStatus() != null) {
+            entity.setStatus(request.getStatus());
+            companyPlanChanged = true;
+        }
+        if (request.getCustomPostsLimit() != null) {
+            entity.setCustomPostsLimit(normalizeOverride(request.getCustomPostsLimit()));
+            companyPlanChanged = true;
+        }
+        if (request.getCustomAccountsLimit() != null) {
+            entity.setCustomAccountsLimit(normalizeOverride(request.getCustomAccountsLimit()));
+            companyPlanChanged = true;
+        }
+        if (request.getRenewalDate() != null) {
+            entity.setRenewalDate(OffsetDateTime.parse(request.getRenewalDate()));
+            companyPlanChanged = true;
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        if (companyPlanChanged) {
+            entity.setUpdatedAt(now);
+            userPlanRepo.save(entity);
+        }
+
+        if (request.getCustomXPostsLimit() != null) {
+            workspace.setCustomXPostsLimit(normalizeOverride(request.getCustomXPostsLimit()));
+            workspace.setUpdatedAt(now);
+            workspaceRepo.save(workspace);
+        }
+
+        log.info("Admin workspace override applied: workspaceId={}, companyId={}, plan={}, status={}, postsLimit={}, accountsLimit={}, workspaceXPostsLimit={}",
+                workspace.getId(), companyId, entity.getPlanType(), entity.getStatus(),
+                entity.getCustomPostsLimit(), entity.getCustomAccountsLimit(), workspace.getCustomXPostsLimit());
+        return toResponse(entity, workspace);
     }
 
     private WorkspaceEntity requireWorkspace(String workspaceId) {
@@ -167,6 +218,11 @@ public class UserPlanService {
     private String resolvePrimaryCompanyId(String userId) {
         return companyAccessService.findPrimaryCompanyId(userId)
                 .orElseThrow(() -> new SocialRavenException("No company found for user " + userId, HttpStatus.BAD_REQUEST));
+    }
+
+    private WorkspaceEntity resolveSingleActiveWorkspace(String companyId) {
+        var workspaces = workspaceRepo.findAllByCompanyIdAndDeletedAtIsNull(companyId);
+        return workspaces.size() == 1 ? workspaces.get(0) : null;
     }
 
     private UserPlanEntity createTrial(String companyId) {
@@ -198,12 +254,44 @@ public class UserPlanService {
         return entity;
     }
 
-    public UserPlanResponse toResponse(UserPlanEntity entity) {
-        PlanConfigEntity config = planConfigRepo.findById(entity.getPlanType())
-                .orElseThrow(() -> new SocialRavenException("Plan config not found: " + entity.getPlanType(), HttpStatus.INTERNAL_SERVER_ERROR));
+    private Integer normalizeOverride(Integer value) {
+        return value != null && value < 0 ? null : value;
+    }
 
-        Integer effectivePostsLimit = entity.getCustomPostsLimit() != null ? entity.getCustomPostsLimit() : config.getPostsPerMonth();
-        Integer effectiveAccountsLimit = entity.getCustomAccountsLimit() != null ? entity.getCustomAccountsLimit() : config.getAccountsLimit();
+    private void ensurePlanExists(PlanType planType) {
+        planConfigRepo.findById(planType)
+                .orElseThrow(() -> new SocialRavenException("Unknown plan: " + planType, HttpStatus.BAD_REQUEST));
+    }
+
+    private PlanConfigEntity requirePlanConfig(PlanType planType) {
+        return planConfigRepo.findById(planType)
+                .orElseThrow(() -> new SocialRavenException("Plan config not found: " + planType, HttpStatus.INTERNAL_SERVER_ERROR));
+    }
+
+    public Integer resolveEffectivePostsLimit(UserPlanEntity entity, PlanConfigEntity config) {
+        return entity.getCustomPostsLimit() != null ? entity.getCustomPostsLimit() : config.getPostsPerMonth();
+    }
+
+    public Integer resolveEffectiveAccountsLimit(UserPlanEntity entity, PlanConfigEntity config) {
+        return entity.getCustomAccountsLimit() != null ? entity.getCustomAccountsLimit() : config.getAccountsLimit();
+    }
+
+    public Integer resolveEffectiveXPostsLimit(UserPlanEntity entity, PlanConfigEntity config, WorkspaceEntity workspace) {
+        if (workspace != null && workspace.getCustomXPostsLimit() != null) {
+            return workspace.getCustomXPostsLimit();
+        }
+        if (entity.getCustomXPostsLimit() != null) {
+            return entity.getCustomXPostsLimit();
+        }
+        return config.getXPostsPerMonth();
+    }
+
+    public UserPlanResponse toResponse(UserPlanEntity entity) {
+        return toResponse(entity, null);
+    }
+
+    public UserPlanResponse toResponse(UserPlanEntity entity, WorkspaceEntity workspace) {
+        PlanConfigEntity config = requirePlanConfig(entity.getPlanType());
 
         UserPlanResponse resp = new UserPlanResponse();
         resp.setCurrentPlan(entity.getPlanType().name());
@@ -213,8 +301,9 @@ public class UserPlanService {
         resp.setTrialEndsAt(entity.getTrialEndsAt() != null ? entity.getTrialEndsAt().toString() : null);
         resp.setCancelAtPeriodEnd(entity.isCancelAtPeriodEnd());
         resp.setPaddleSubscriptionId(entity.getPaddleSubscriptionId());
-        resp.setPostsLimit(effectivePostsLimit);
-        resp.setAccountsLimit(effectiveAccountsLimit);
+        resp.setPostsLimit(resolveEffectivePostsLimit(entity, config));
+        resp.setAccountsLimit(resolveEffectiveAccountsLimit(entity, config));
+        resp.setXPostsLimit(resolveEffectiveXPostsLimit(entity, config, workspace));
         return resp;
     }
 }

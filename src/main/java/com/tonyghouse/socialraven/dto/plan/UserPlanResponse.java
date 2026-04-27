@@ -15,4 +15,9 @@ public class UserPlanResponse {
     private Integer postsLimit;
     /** Effective connected-accounts limit; null = unlimited */
     private Integer accountsLimit;
+    /**
+     * Effective x.com posts/month limit.
+     * When a workspace is in scope, workspace override > company override > plan default.
+     */
+    private Integer xPostsLimit;
 }

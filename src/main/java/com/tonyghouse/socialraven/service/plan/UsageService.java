@@ -1,6 +1,7 @@
 package com.tonyghouse.socialraven.service.plan;
 
 import com.tonyghouse.socialraven.dto.plan.UsageStatsResponse;
+import com.tonyghouse.socialraven.constant.Provider;
 import com.tonyghouse.socialraven.entity.WorkspaceEntity;
 import com.tonyghouse.socialraven.entity.PlanConfigEntity;
 import com.tonyghouse.socialraven.entity.UserPlanEntity;
@@ -8,6 +9,7 @@ import com.tonyghouse.socialraven.exception.SocialRavenException;
 import com.tonyghouse.socialraven.repo.OAuthInfoRepo;
 import com.tonyghouse.socialraven.repo.PlanConfigRepo;
 import com.tonyghouse.socialraven.repo.PostCollectionRepo;
+import com.tonyghouse.socialraven.repo.PostRepo;
 import com.tonyghouse.socialraven.repo.WorkspaceRepo;
 import com.tonyghouse.socialraven.service.company.CompanyAccessService;
 import com.tonyghouse.socialraven.util.WorkspaceContext;
@@ -23,6 +25,9 @@ public class UsageService {
 
     @Autowired
     private PostCollectionRepo postCollectionRepo;
+
+    @Autowired
+    private PostRepo postRepo;
 
     @Autowired
     private OAuthInfoRepo oAuthInfoRepo;
@@ -71,8 +76,13 @@ public class UsageService {
 
         long accountsCount = workspaceId != null ? oAuthInfoRepo.findAllByWorkspaceId(workspaceId).size() : 0;
 
-        Integer postsLimit    = planEntity.getCustomPostsLimit()    != null ? planEntity.getCustomPostsLimit()    : config.getPostsPerMonth();
-        Integer accountsLimit = planEntity.getCustomAccountsLimit() != null ? planEntity.getCustomAccountsLimit() : config.getAccountsLimit();
+        long xPostsUsed = workspaceId != null
+                ? postRepo.countWorkspacePostsByProviderFromMonth(workspaceId, Provider.X, startOfMonth)
+                : 0;
+
+        Integer postsLimit = userPlanService.resolveEffectivePostsLimit(planEntity, config);
+        Integer accountsLimit = userPlanService.resolveEffectiveAccountsLimit(planEntity, config);
+        Integer xPostsLimit = userPlanService.resolveEffectiveXPostsLimit(planEntity, config, workspace);
 
         int workspacesOwned = workspaceRepo.findAllByCompanyIdAndDeletedAtIsNull(companyId).size();
 
@@ -81,6 +91,8 @@ public class UsageService {
         resp.setPostsLimit(postsLimit);
         resp.setConnectedAccountsCount(accountsCount);
         resp.setAccountsLimit(accountsLimit);
+        resp.setXPostsUsedThisMonth(xPostsUsed);
+        resp.setXPostsLimit(xPostsLimit);
         resp.setWorkspacesOwned(workspacesOwned);
         resp.setMaxWorkspaces(config.getMaxWorkspaces());
         return resp;

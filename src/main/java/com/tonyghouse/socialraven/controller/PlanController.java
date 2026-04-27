@@ -60,7 +60,7 @@ public class PlanController {
 
     /**
      * GET /plans/usage
-     * Returns posts-used-this-month, connected-accounts, and workspace counts vs. plan limits.
+     * Returns general usage plus workspace-scoped x.com usage and limits.
      */
     @GetMapping("/usage")
     public UsageStatsResponse getUsage() {
